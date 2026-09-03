@@ -55,6 +55,8 @@ export function MapView() {
   const resetDraw = useDrawStore((state) => state.reset);
   const cancelDraw = useDrawStore((state) => state.cancel);
   const setMode = useDrawStore((state) => state.setMode);
+  const pauseGps = useDrawStore((state) => state.pauseGps);
+  const clearGpsSession = useDrawStore((state) => state.clearGpsSession);
 
   const visibleRoutes = useMemo(
     () => routes.filter((route) => !hiddenIds.has(route.properties.id)),
@@ -74,6 +76,10 @@ export function MapView() {
   const openSaveDialog = useCallback(() => {
     const state = useDrawStore.getState();
     if (state.points.length < 2) return;
+
+    if (state.mode === 'gps' && !state.gpsPaused) {
+      pauseGps();
+    }
 
     if (state.mode === 'edit' && state.editingRouteId) {
       const existing = useRouteStore
@@ -111,7 +117,7 @@ export function MapView() {
     );
     setRouteNotes('');
     setSaveDialog({ open: true, defaultName: prefix });
-  }, [cancelDraw, selectRoute, updateRoute]);
+  }, [cancelDraw, pauseGps, selectRoute, updateRoute]);
 
   const handleFreehandComplete = useCallback(() => {
     if (useDrawStore.getState().points.length < 2) {
@@ -179,6 +185,10 @@ export function MapView() {
       fitMapToRoute(map, tempRoute);
     }
 
+    if (currentMode === 'gps') {
+      await clearGpsSession();
+    }
+
     setSaveDialog({ open: false, defaultName: '' });
     setRouteName('');
     setRouteNotes('');
@@ -190,6 +200,10 @@ export function MapView() {
     setSaveDialog({ open: false, defaultName: '' });
     setRouteName('');
     setRouteNotes('');
+    if (useDrawStore.getState().mode === 'gps') {
+      useDrawStore.getState().resumeGps();
+      return;
+    }
     cancelDraw();
   };
 

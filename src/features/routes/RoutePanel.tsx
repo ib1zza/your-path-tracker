@@ -1,12 +1,65 @@
 import { useRef, useState } from 'react';
-import { exportAllRoutes, exportRoute } from '../../lib/geo/exportImport';
+import { exportAllRoutes, exportRoute, type ImportKind } from '../../lib/geo/exportImport';
 import { useDrawStore } from '../../stores/drawStore';
 import { useRouteStore } from '../../stores/routeStore';
 import { RouteItem } from './RouteItem';
 import { StatsPanel } from './StatsPanel';
 
+const IMPORT_OPTIONS: Array<{
+  kind: ImportKind;
+  label: string;
+  hint: string;
+  accept: string;
+  multiple: boolean;
+}> = [
+  {
+    kind: 'auto',
+    label: 'Auto-detect',
+    hint: 'GPX, GeoJSON, KML, TCX or ZIP',
+    accept: '.geojson,.json,.gpx,.kml,.kmz,.tcx,.zip,application/geo+json,application/gpx+xml,application/zip',
+    multiple: true,
+  },
+  {
+    kind: 'gpx',
+    label: 'GPX',
+    hint: 'One or more .gpx files',
+    accept: '.gpx,application/gpx+xml',
+    multiple: true,
+  },
+  {
+    kind: 'geojson',
+    label: 'GeoJSON',
+    hint: '.geojson or .json',
+    accept: '.geojson,.json,application/geo+json',
+    multiple: true,
+  },
+  {
+    kind: 'health',
+    label: 'Apple Health',
+    hint: 'export.zip → workout-routes',
+    accept: '.zip,application/zip',
+    multiple: false,
+  },
+  {
+    kind: 'kml',
+    label: 'KML / KMZ',
+    hint: 'Google Earth export',
+    accept: '.kml,.kmz',
+    multiple: true,
+  },
+  {
+    kind: 'tcx',
+    label: 'TCX',
+    hint: 'Garmin activity',
+    accept: '.tcx',
+    multiple: true,
+  },
+];
+
 export function RoutePanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingKindRef = useRef<ImportKind>('auto');
+  const [importOpen, setImportOpen] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
 
   const routes = useRouteStore((state) => state.routes);
@@ -20,21 +73,27 @@ export function RoutePanel() {
   const importRoutes = useRouteStore((state) => state.importRoutes);
   const startEdit = useDrawStore((state) => state.startEdit);
 
-  const handleImportClick = () => {
-    fileInputRef.current?.click();
+  const openFilePicker = (option: (typeof IMPORT_OPTIONS)[number]) => {
+    pendingKindRef.current = option.kind;
+    setImportOpen(false);
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.accept = option.accept;
+    input.multiple = option.multiple;
+    input.click();
   };
 
   const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = [...(event.target.files ?? [])];
     event.target.value = '';
-    if (!file) return;
+    if (files.length === 0) return;
 
     const overwrite = window.confirm(
       'If imported routes have the same IDs as existing ones, overwrite them?',
     );
 
     try {
-      const result = await importRoutes(file, overwrite);
+      const result = await importRoutes(files, overwrite, pendingKindRef.current);
       setImportMessage(`Imported ${result.imported}, skipped ${result.skipped}`);
     } catch (error) {
       setImportMessage(error instanceof Error ? error.message : 'Import failed');
@@ -51,9 +110,41 @@ export function RoutePanel() {
       <StatsPanel />
 
       <div className="route-panel__toolbar">
-        <button type="button" className="btn btn--ghost" onClick={handleImportClick}>
-          Import
-        </button>
+        <div className="import-menu">
+          <button
+            type="button"
+            className="btn btn--ghost"
+            aria-expanded={importOpen}
+            aria-haspopup="menu"
+            onClick={() => setImportOpen((open) => !open)}
+          >
+            Import
+          </button>
+          {importOpen && (
+            <>
+              <button
+                type="button"
+                className="import-menu__backdrop"
+                aria-label="Close import menu"
+                onClick={() => setImportOpen(false)}
+              />
+              <div className="import-menu__list" role="menu">
+                {IMPORT_OPTIONS.map((option) => (
+                  <button
+                    key={option.kind}
+                    type="button"
+                    className="import-menu__item"
+                    role="menuitem"
+                    onClick={() => openFilePicker(option)}
+                  >
+                    <span>{option.label}</span>
+                    <small>{option.hint}</small>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
         <button
           type="button"
           className="btn btn--ghost"
@@ -65,7 +156,7 @@ export function RoutePanel() {
         <input
           ref={fileInputRef}
           type="file"
-          accept=".geojson,.json,.gpx,application/geo+json,application/gpx+xml"
+          accept=".geojson,.json,.gpx,.kml,.kmz,.tcx,.zip,application/geo+json,application/gpx+xml,application/zip"
           hidden
           onChange={(event) => void handleImportFile(event)}
         />
@@ -77,7 +168,7 @@ export function RoutePanel() {
         {isLoading && <p className="route-panel__empty">Loading routes…</p>}
         {!isLoading && routes.length === 0 && (
           <p className="route-panel__empty">
-            No routes yet. Draw, record GPS, or import GeoJSON/GPX.
+            No routes yet. Draw, record GPS, or import GPX / Apple Health ZIP.
           </p>
         )}
         {routes.map((route) => (

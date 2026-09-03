@@ -5,7 +5,7 @@ import {
   saveRoute,
   saveRoutes,
 } from '../db/routesDb';
-import { readRouteFile } from '../lib/geo/exportImport';
+import { readRouteFiles, type ImportKind } from '../lib/geo/exportImport';
 import { resolveRoutePlaceName } from '../lib/geo/geocode';
 import { routeCentroid } from '../lib/geo/globe';
 import type { MapStyleId } from '../features/map/mapConfig';
@@ -28,7 +28,7 @@ interface RouteState {
   toggleHeatmap: () => void;
   setMapStyleId: (id: MapStyleId) => void;
   ensurePlaceNames: () => Promise<void>;
-  importRoutes: (file: File, overwrite: boolean) => Promise<{ imported: number; skipped: number }>;
+  importRoutes: (files: File[] | File, overwrite: boolean, kind?: ImportKind) => Promise<{ imported: number; skipped: number }>;
 }
 
 const MAP_STYLE_KEY = 'path-tracker-map-style';
@@ -134,8 +134,9 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
   },
 
-  importRoutes: async (file, overwrite) => {
-    const incoming = await readRouteFile(file, get().routes.length);
+  importRoutes: async (files, overwrite, kind = 'auto') => {
+    const list = Array.isArray(files) ? files : [files];
+    const incoming = await readRouteFiles(list, get().routes.length, kind);
     const existing = get().routes;
     const existingIds = new Set(existing.map((route) => route.properties.id));
 
@@ -148,6 +149,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
         continue;
       }
       toSave.push(route);
+      existingIds.add(route.properties.id);
     }
 
     if (toSave.length > 0) {

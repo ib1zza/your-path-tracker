@@ -1,5 +1,13 @@
 import { create } from 'zustand';
 import type { Position } from 'geojson';
+import { clearGpsDraft, getGpsDraft, saveGpsDraft } from '../db/routesDb';
+import {
+  permissionErrorMessage,
+  queryGeoPermission,
+  requestGeoPermission,
+  requestWakeLock,
+  type GeoPermissionState,
+} from '../lib/geo/geolocation';
 
 export type DrawMode = 'none' | 'click' | 'freehand' | 'gps' | 'edit';
 
@@ -10,8 +18,19 @@ interface DrawState {
   editingRouteId: string | null;
   gpsWatchId: number | null;
   gpsError: string | null;
+  gpsPermission: GeoPermissionState;
+  gpsPaused: boolean;
+  gpsFollow: boolean;
+  gpsAccuracy: number | null;
+  gpsStartedAt: string | null;
+  gpsWakeLock: WakeLockSentinel | null;
   setMode: (mode: DrawMode) => void;
   startEdit: (routeId: string, points: Position[]) => void;
+  startGpsRecording: () => Promise<boolean>;
+  resumeGpsDraft: () => Promise<boolean>;
+  pauseGps: () => void;
+  resumeGps: () => void;
+  setGpsFollow: (follow: boolean) => void;
   addPoint: (point: Position) => void;
   undoLastPoint: () => void;
   setPoints: (points: Position[]) => void;
@@ -19,8 +38,28 @@ interface DrawState {
   setFreehandActive: (active: boolean) => void;
   setGpsWatchId: (id: number | null) => void;
   setGpsError: (message: string | null) => void;
+  setGpsAccuracy: (accuracy: number | null) => void;
+  setGpsPermission: (state: GeoPermissionState) => void;
+  setGpsWakeLock: (lock: WakeLockSentinel | null) => void;
+  persistGpsDraft: () => Promise<void>;
+  clearGpsSession: () => Promise<void>;
   reset: () => void;
   cancel: () => void;
+}
+
+async function releaseWakeLock(lock: WakeLockSentinel | null) {
+  if (!lock) return;
+  try {
+    await lock.release();
+  } catch {
+    // ignore
+  }
+}
+
+function stopWatch(watchId: number | null) {
+  if (watchId !== null && typeof navigator !== 'undefined') {
+    navigator.geolocation.clearWatch(watchId);
+  }
 }
 
 export const useDrawStore = create<DrawState>((set, get) => ({
@@ -30,11 +69,19 @@ export const useDrawStore = create<DrawState>((set, get) => ({
   editingRouteId: null,
   gpsWatchId: null,
   gpsError: null,
+  gpsPermission: 'unknown',
+  gpsPaused: false,
+  gpsFollow: true,
+  gpsAccuracy: null,
+  gpsStartedAt: null,
+  gpsWakeLock: null,
 
   setMode: (mode) => {
-    const { gpsWatchId } = get();
-    if (gpsWatchId !== null && typeof navigator !== 'undefined') {
-      navigator.geolocation.clearWatch(gpsWatchId);
+    const state = get();
+    stopWatch(state.gpsWatchId);
+    void releaseWakeLock(state.gpsWakeLock);
+    if (state.mode === 'gps' && mode !== 'gps') {
+      void clearGpsDraft();
     }
     set({
       mode,
@@ -43,14 +90,18 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       editingRouteId: null,
       gpsWatchId: null,
       gpsError: null,
+      gpsPaused: false,
+      gpsAccuracy: null,
+      gpsStartedAt: null,
+      gpsWakeLock: null,
     });
   },
 
   startEdit: (routeId, points) => {
-    const { gpsWatchId } = get();
-    if (gpsWatchId !== null && typeof navigator !== 'undefined') {
-      navigator.geolocation.clearWatch(gpsWatchId);
-    }
+    const state = get();
+    stopWatch(state.gpsWatchId);
+    void releaseWakeLock(state.gpsWakeLock);
+    void clearGpsDraft();
     set({
       mode: 'edit',
       editingRouteId: routeId,
@@ -58,8 +109,115 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       isFreehandActive: false,
       gpsWatchId: null,
       gpsError: null,
+      gpsPaused: false,
+      gpsAccuracy: null,
+      gpsStartedAt: null,
+      gpsWakeLock: null,
     });
   },
+
+  startGpsRecording: async () => {
+    const state = get();
+    stopWatch(state.gpsWatchId);
+    void releaseWakeLock(state.gpsWakeLock);
+
+    const permission = await queryGeoPermission();
+    set({ gpsPermission: permission });
+
+    if (permission === 'unsupported') {
+      set({ gpsError: 'Geolocation is not supported in this browser' });
+      return false;
+    }
+
+    try {
+      await requestGeoPermission();
+      set({ gpsPermission: 'granted', gpsError: null });
+    } catch (error) {
+      const message = permissionErrorMessage(error as GeolocationPositionError);
+      set({
+        gpsError: message,
+        gpsPermission: (error as GeolocationPositionError).code === 1 ? 'denied' : permission,
+      });
+      return false;
+    }
+
+    const wakeLock = await requestWakeLock();
+    const startedAt = new Date().toISOString();
+
+    set({
+      mode: 'gps',
+      points: [],
+      isFreehandActive: false,
+      editingRouteId: null,
+      gpsWatchId: null,
+      gpsError: null,
+      gpsPaused: false,
+      gpsAccuracy: null,
+      gpsStartedAt: startedAt,
+      gpsWakeLock: wakeLock,
+      gpsFollow: true,
+    });
+
+    await saveGpsDraft({
+      points: [],
+      startedAt,
+      updatedAt: startedAt,
+      active: true,
+      paused: false,
+    });
+
+    return true;
+  },
+
+  resumeGpsDraft: async () => {
+    const draft = await getGpsDraft();
+    if (!draft?.active || draft.points.length === 0) {
+      return false;
+    }
+
+    try {
+      await requestGeoPermission();
+    } catch (error) {
+      set({
+        gpsError: permissionErrorMessage(error as GeolocationPositionError),
+        gpsPermission: 'denied',
+      });
+      return false;
+    }
+
+    const wakeLock = await requestWakeLock();
+    set({
+      mode: 'gps',
+      points: draft.points,
+      editingRouteId: null,
+      isFreehandActive: false,
+      gpsPaused: draft.paused,
+      gpsStartedAt: draft.startedAt,
+      gpsError: null,
+      gpsPermission: 'granted',
+      gpsWakeLock: wakeLock,
+      gpsFollow: true,
+      gpsAccuracy: null,
+      gpsWatchId: null,
+    });
+    return true;
+  },
+
+  pauseGps: () => {
+    const state = get();
+    stopWatch(state.gpsWatchId);
+    void releaseWakeLock(state.gpsWakeLock);
+    set({ gpsPaused: true, gpsWatchId: null, gpsWakeLock: null });
+    void get().persistGpsDraft();
+  },
+
+  resumeGps: () => {
+    set({ gpsPaused: false, gpsError: null });
+    void get().persistGpsDraft();
+    void requestWakeLock().then((lock) => set({ gpsWakeLock: lock }));
+  },
+
+  setGpsFollow: (follow) => set({ gpsFollow: follow }),
 
   addPoint: (point) =>
     set((state) => ({
@@ -84,6 +242,39 @@ export const useDrawStore = create<DrawState>((set, get) => ({
 
   setGpsError: (message) => set({ gpsError: message }),
 
+  setGpsAccuracy: (accuracy) => set({ gpsAccuracy: accuracy }),
+
+  setGpsPermission: (state) => set({ gpsPermission: state }),
+
+  setGpsWakeLock: (lock) => set({ gpsWakeLock: lock }),
+
+  persistGpsDraft: async () => {
+    const state = get();
+    if (state.mode !== 'gps') return;
+    await saveGpsDraft({
+      points: state.points,
+      startedAt: state.gpsStartedAt ?? new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      active: true,
+      paused: state.gpsPaused,
+    });
+  },
+
+  clearGpsSession: async () => {
+    const state = get();
+    stopWatch(state.gpsWatchId);
+    await releaseWakeLock(state.gpsWakeLock);
+    await clearGpsDraft();
+    set({
+      gpsWatchId: null,
+      gpsWakeLock: null,
+      gpsPaused: false,
+      gpsAccuracy: null,
+      gpsStartedAt: null,
+      gpsError: null,
+    });
+  },
+
   reset: () =>
     set({
       points: [],
@@ -92,9 +283,11 @@ export const useDrawStore = create<DrawState>((set, get) => ({
     }),
 
   cancel: () => {
-    const { gpsWatchId } = get();
-    if (gpsWatchId !== null && typeof navigator !== 'undefined') {
-      navigator.geolocation.clearWatch(gpsWatchId);
+    const state = get();
+    stopWatch(state.gpsWatchId);
+    void releaseWakeLock(state.gpsWakeLock);
+    if (state.mode === 'gps') {
+      void clearGpsDraft();
     }
     set({
       mode: 'none',
@@ -103,6 +296,10 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       editingRouteId: null,
       gpsWatchId: null,
       gpsError: null,
+      gpsPaused: false,
+      gpsAccuracy: null,
+      gpsStartedAt: null,
+      gpsWakeLock: null,
     });
   },
 }));
