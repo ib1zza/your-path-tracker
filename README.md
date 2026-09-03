@@ -1,32 +1,47 @@
-# React + TypeScript + Vite
+# Path Tracker
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Offline-first веб-приложение для рисования, GPS-записи и импорта маршрутов с визуализацией на карте и 3D-глобусе. Данные хранятся локально в браузере (IndexedDB).
 
-Currently, two official plugins are available:
+**Стек:** React 19 · TypeScript · Vite · MapLibre GL · Zustand · Dexie · Turf
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Быстрый старт
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev      # http://localhost:5173
+npm run build
+npm run lint
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Документация
+
+Полная документация для разработчиков и AI-агентов — в каталоге [`docs/`](docs/):
+
+| Документ | Описание |
+|----------|----------|
+| [docs/README.md](docs/README.md) | Индекс документации |
+| [docs/agent-guide.md](docs/agent-guide.md) | **Старт для AI-агентов** — карта модулей, инварианты |
+| [docs/overview.md](docs/overview.md) | Возможности и стек |
+| [docs/architecture.md](docs/architecture.md) | Архитектура и потоки данных |
+| [docs/getting-started.md](docs/getting-started.md) | Установка и dev workflow |
+
+Остальные разделы: [data-model](docs/data-model.md) · [state-management](docs/state-management.md) · [map-and-layers](docs/map-and-layers.md) · [drawing-and-gps](docs/drawing-and-gps.md) · [import-export](docs/import-export.md) · [geo-utilities](docs/geo-utilities.md) · [ui-components](docs/ui-components.md)
+
+## Страницы
+
+| URL | Описание |
+|-----|----------|
+| `/` | 2D-карта, рисование, панель маршрутов |
+| `/globe` | 3D-глобус со спутниковыми снимками |
+
+## Структура проекта
+
+```
+src/
+├── features/   map, draw, routes
+├── stores/     routeStore, drawStore (Zustand)
+├── db/         IndexedDB (Dexie)
+├── lib/geo/    геометрия, импорт, геокодинг
+├── types/      RouteFeature (GeoJSON)
+└── pages/      MapPage, GlobePage
+```
