@@ -1,12 +1,10 @@
 import { create } from 'zustand';
-import { getAllRoutes } from '../db/routesDb';
-import { persistRoute, persistRoutes, removeRoute } from '../lib/firebase/syncRoutes';
+import { persistRoute, persistRoutes, removeRoute, loadRoutesForCurrentUser } from '../lib/firebase/syncRoutes';
 import { readRouteFiles, type ImportKind } from '../lib/geo/exportImport';
 import { resolveRoutePlaceName } from '../lib/geo/geocode';
 import { routeCentroid } from '../lib/geo/globe';
 import { extractImportedCreatedAt, getRouteActivityDate } from '../lib/geo/routeDate';
 import { thinRoutes } from '../lib/geo/routeGeometry';
-import type { MapStyleId } from '../features/map/mapConfig';
 import type { RouteFeature } from '../types/route';
 
 interface RouteState {
@@ -15,7 +13,6 @@ interface RouteState {
   hiddenIds: Set<string>;
   isLoading: boolean;
   heatmapEnabled: boolean;
-  mapStyleId: MapStyleId;
   loadRoutes: () => Promise<void>;
   addRoute: (route: RouteFeature) => Promise<void>;
   updateRoute: (route: RouteFeature) => Promise<void>;
@@ -24,7 +21,6 @@ interface RouteState {
   toggleVisibility: (id: string) => void;
   isVisible: (id: string) => boolean;
   toggleHeatmap: () => void;
-  setMapStyleId: (id: MapStyleId) => void;
   ensurePlaceNames: () => Promise<void>;
   importRoutes: (
     files: File[] | File,
@@ -34,18 +30,9 @@ interface RouteState {
   applyRoutes: (routes: RouteFeature[]) => void;
 }
 
-const MAP_STYLE_KEY = 'path-tracker-map-style';
 const PLACE_NAME_GAP_MS = 1100;
 
 let placeNamesInFlight: Promise<void> | null = null;
-
-function loadMapStyle(): MapStyleId {
-  const value = localStorage.getItem(MAP_STYLE_KEY);
-  if (value === 'osm' || value === 'dark' || value === 'topo') {
-    return value;
-  }
-  return 'osm';
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -59,11 +46,10 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   hiddenIds: new Set(),
   isLoading: true,
   heatmapEnabled: false,
-  mapStyleId: loadMapStyle(),
 
   loadRoutes: async () => {
     set({ isLoading: true });
-    const loaded = await getAllRoutes();
+    const loaded = await loadRoutesForCurrentUser();
     const { routes: thinned, changed: thinnedChanged } = thinRoutes(loaded);
 
     // Backfill activity dates from GPX/Health-style names when createdAt is just import time.
@@ -162,11 +148,6 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   isVisible: (id) => !get().hiddenIds.has(id),
 
   toggleHeatmap: () => set((state) => ({ heatmapEnabled: !state.heatmapEnabled })),
-
-  setMapStyleId: (id) => {
-    localStorage.setItem(MAP_STYLE_KEY, id);
-    set({ mapStyleId: id });
-  },
 
   ensurePlaceNames: async () => {
     if (placeNamesInFlight) {

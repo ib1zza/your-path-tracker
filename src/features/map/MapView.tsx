@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Map, { type MapRef } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -14,7 +14,7 @@ import { pickRouteColor } from '../../types/route';
 import { useDrawKeyboard, useFreehandDraw } from '../draw/useDrawHandlers';
 import { useGpsDraw } from '../draw/useGpsDraw';
 import { useVertexEdit } from '../draw/useVertexEdit';
-import { DEFAULT_MAP_VIEW, MAP_STYLES } from './mapConfig';
+import { DEFAULT_MAP_VIEW, OSM_MAP_STYLE } from './mapConfig';
 import { MapControls } from './MapControls';
 import { PlaceSearch } from './PlaceSearch';
 import {
@@ -46,7 +46,6 @@ export function MapView() {
   const selectedId = useRouteStore((state) => state.selectedId);
   const hiddenIds = useRouteStore((state) => state.hiddenIds);
   const heatmapEnabled = useRouteStore((state) => state.heatmapEnabled);
-  const mapStyleId = useRouteStore((state) => state.mapStyleId);
   const addRoute = useRouteStore((state) => state.addRoute);
   const updateRoute = useRouteStore((state) => state.updateRoute);
   const selectRoute = useRouteStore((state) => state.selectRoute);
@@ -150,10 +149,6 @@ export function MapView() {
   useGpsDraw(mapRef, mapLoaded);
   useVertexEdit(mapRef, mapLoaded);
   useDrawKeyboard(openSaveDialog);
-
-  useEffect(() => {
-    setMapLoaded(false);
-  }, [mapStyleId]);
 
   const handleSaveRoute = async () => {
     const { mode: currentMode, points: currentPoints } = useDrawStore.getState();
@@ -286,9 +281,8 @@ export function MapView() {
     <div className="map-view">
       <Map
         ref={mapRef}
-        key={mapStyleId}
         initialViewState={DEFAULT_MAP_VIEW}
-        mapStyle={MAP_STYLES[mapStyleId].style}
+        mapStyle={OSM_MAP_STYLE}
         style={{ width: '100%', height: '100%' }}
         dragPan={mode !== 'freehand'}
         onLoad={() => setMapLoaded(true)}

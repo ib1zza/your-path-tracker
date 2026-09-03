@@ -2,6 +2,7 @@ import { getCurrentUser } from '../firebase/auth';
 import {
   deleteRoute as deleteLocalRoute,
   getAllRoutes,
+  replaceAllRoutes,
   saveRoute,
   saveRoutes,
 } from '../../db/routesDb';
@@ -18,76 +19,89 @@ function routeUpdatedAt(route: RouteFeature): number {
   return Number.isNaN(value) ? 0 : value;
 }
 
-export function mergeRoutes(local: RouteFeature[], cloud: RouteFeature[]): RouteFeature[] {
-  const merged = new Map<string, RouteFeature>();
-
-  for (const route of [...local, ...cloud]) {
-    const existing = merged.get(route.properties.id);
-    if (!existing || routeUpdatedAt(route) >= routeUpdatedAt(existing)) {
-      merged.set(route.properties.id, route);
-    }
-  }
-
-  return [...merged.values()].sort(
-    (a, b) => routeUpdatedAt(b) - routeUpdatedAt(a),
-  );
+function sortRoutes(routes: RouteFeature[]): RouteFeature[] {
+  return [...routes].sort((a, b) => routeUpdatedAt(b) - routeUpdatedAt(a));
 }
 
+/** Overlay route updates onto an existing cloud snapshot. */
+function applyRouteUpdates(base: RouteFeature[], updates: RouteFeature[]): RouteFeature[] {
+  const merged = new Map(base.map((route) => [route.properties.id, route]));
+  for (const route of updates) {
+    merged.set(route.properties.id, route);
+  }
+  return sortRoutes([...merged.values()]);
+}
+
+/**
+ * Firebase-first sync on sign-in:
+ * - cloud has data → replace local cache with cloud
+ * - cloud empty, local has data → bootstrap cloud from local
+ * - both empty → nothing to do
+ */
 export async function syncRoutesForUser(
   uid: string,
   onProgress?: (message: string) => void,
 ): Promise<RouteFeature[]> {
-  onProgress?.('Reading local routes…');
-  const local = await getAllRoutes();
-
-  onProgress?.('Reading cloud backup…');
+  onProgress?.('Loading routes from cloud…');
   const cloud = await fetchCloudRoutes(uid);
 
-  onProgress?.('Merging routes…');
-  const merged = mergeRoutes(local, cloud);
-
-  const localMap = new Map(local.map((route) => [route.properties.id, route]));
-  const cloudMap = new Map(cloud.map((route) => [route.properties.id, route]));
-
-  const toLocal = merged.filter((route) => {
-    const current = localMap.get(route.properties.id);
-    return !current || routeUpdatedAt(route) > routeUpdatedAt(current);
-  });
-
-  const needsCloudUpload =
-    cloud.length === 0 ||
-    merged.length !== cloud.length ||
-    merged.some((route) => {
-      const current = cloudMap.get(route.properties.id);
-      return !current || routeUpdatedAt(route) > routeUpdatedAt(current);
-    });
-
-  if (toLocal.length > 0) {
-    onProgress?.(`Updating ${toLocal.length} local routes…`);
-    await saveRoutes(toLocal);
+  if (cloud.length > 0) {
+    onProgress?.(`Applying ${cloud.length} routes from cloud…`);
+    await replaceAllRoutes(cloud);
+    onProgress?.('Sync complete');
+    return sortRoutes(cloud);
   }
 
-  if (needsCloudUpload) {
-    onProgress?.(`Uploading ${merged.length} routes…`);
-    await saveCloudRoutes(uid, merged);
+  onProgress?.('Cloud is empty, checking local cache…');
+  const local = await getAllRoutes();
+
+  if (local.length > 0) {
+    onProgress?.(`Uploading ${local.length} local routes to cloud…`);
+    await saveCloudRoutes(uid, local);
+    onProgress?.('Sync complete');
+    return sortRoutes(local);
   }
 
-  onProgress?.('Sync complete');
-  return merged;
+  onProgress?.('No routes yet');
+  return [];
+}
+
+export async function loadRoutesForCurrentUser(): Promise<RouteFeature[]> {
+  const uid = getCurrentUser()?.uid;
+  if (!uid) {
+    return getAllRoutes();
+  }
+
+  const cloud = await fetchCloudRoutes(uid);
+  if (cloud.length > 0) {
+    await replaceAllRoutes(cloud);
+    return cloud;
+  }
+
+  return getAllRoutes();
+}
+
+async function mirrorCloudToLocal(uid: string): Promise<RouteFeature[]> {
+  const cloud = await fetchCloudRoutes(uid);
+  await replaceAllRoutes(cloud);
+  return cloud;
 }
 
 export async function pushRouteToCloud(uid: string, route: RouteFeature): Promise<void> {
-  await Promise.all([saveRoute(route), saveCloudRoute(uid, route)]);
+  await saveCloudRoute(uid, route);
+  await saveRoute(route);
 }
 
 export async function pushRoutesToCloud(uid: string, routes: RouteFeature[]): Promise<void> {
-  await saveRoutes(routes);
   const cloud = await fetchCloudRoutes(uid);
-  await saveCloudRoutes(uid, mergeRoutes(cloud, routes));
+  const next = applyRouteUpdates(cloud, routes);
+  await saveCloudRoutes(uid, next);
+  await replaceAllRoutes(next);
 }
 
 export async function removeRouteEverywhere(uid: string, routeId: string): Promise<void> {
-  await Promise.all([deleteLocalRoute(routeId), deleteCloudRoute(uid, routeId)]);
+  await deleteCloudRoute(uid, routeId);
+  await deleteLocalRoute(routeId);
 }
 
 function currentUid(): string | null {
@@ -122,4 +136,8 @@ export async function removeRoute(routeId: string): Promise<void> {
   }
 
   await deleteLocalRoute(routeId);
+}
+
+export async function refreshLocalFromCloud(uid: string): Promise<RouteFeature[]> {
+  return mirrorCloudToLocal(uid);
 }

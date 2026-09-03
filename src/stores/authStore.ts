@@ -31,6 +31,7 @@ export const useAuthStore = create<AuthState>((set) => ({
 
   init: () => {
     if (!isFirebaseConfigured) {
+      void useRouteStore.getState().loadRoutes();
       return () => {};
     }
 
@@ -42,8 +43,8 @@ export const useAuthStore = create<AuthState>((set) => ({
         void syncRoutesForUser(user.uid, (syncStatus) => {
           set({ syncStatus });
         })
-          .then((merged) => {
-            useRouteStore.getState().applyRoutes(merged);
+          .then((routes) => {
+            useRouteStore.getState().applyRoutes(routes);
           })
           .catch((error: unknown) => {
             const message =
@@ -53,9 +54,11 @@ export const useAuthStore = create<AuthState>((set) => ({
           .finally(() => {
             set({ isSyncing: false, syncStatus: null });
           });
-      } else {
-        set({ syncStatus: null, isSyncing: false });
+        return;
       }
+
+      set({ syncStatus: null, isSyncing: false });
+      void useRouteStore.getState().loadRoutes();
     });
   },
 

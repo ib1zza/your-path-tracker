@@ -47,6 +47,13 @@ export async function saveRoutes(routes: RouteFeature[]): Promise<void> {
   await db.routes.bulkPut(routes);
 }
 
+export async function replaceAllRoutes(routes: RouteFeature[]): Promise<void> {
+  await db.routes.clear();
+  if (routes.length > 0) {
+    await db.routes.bulkPut(routes);
+  }
+}
+
 export async function getGpsDraft(): Promise<GpsDraft | undefined> {
   return db.gpsDraft.get(GPS_DRAFT_ID);
 }

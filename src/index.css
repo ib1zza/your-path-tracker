@@ -96,14 +96,6 @@ a {
   background: #dbe3ee;
 }
 
-.draw-toolbar__select {
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  padding: 0.4rem 0.55rem;
-  background: #ffffff;
-  color: #0f172a;
-}
-
 .btn {
   border: 1px solid #cbd5e1;
   background: #ffffff;

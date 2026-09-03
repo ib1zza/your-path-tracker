@@ -4,17 +4,13 @@ import { Layout } from './components/Layout';
 import { GlobePage } from './pages/GlobePage';
 import { MapPage } from './pages/MapPage';
 import { useAuthStore } from './stores/authStore';
-import { useRouteStore } from './stores/routeStore';
 
 function AppRoutes() {
-  const loadRoutes = useRouteStore((state) => state.loadRoutes);
   const initAuth = useAuthStore((state) => state.init);
 
   useEffect(() => {
-    const unsubscribe = initAuth();
-    void loadRoutes();
-    return unsubscribe;
-  }, [initAuth, loadRoutes]);
+    return initAuth();
+  }, [initAuth]);
 
   return (
     <Routes>

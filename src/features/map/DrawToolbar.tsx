@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { calculateDistanceMeters } from '../../lib/geo/distance';
 import { formatDistance } from '../../types/route';
 import { queryGeoPermission } from '../../lib/geo/geolocation';
-import { MAP_STYLES, type MapStyleId } from './mapConfig';
 import { useDrawStore } from '../../stores/drawStore';
 import { useRouteStore } from '../../stores/routeStore';
 
@@ -13,8 +12,6 @@ export function DrawToolbar() {
   const startGpsRecording = useDrawStore((state) => state.startGpsRecording);
   const heatmapEnabled = useRouteStore((state) => state.heatmapEnabled);
   const toggleHeatmap = useRouteStore((state) => state.toggleHeatmap);
-  const mapStyleId = useRouteStore((state) => state.mapStyleId);
-  const setMapStyleId = useRouteStore((state) => state.setMapStyleId);
   const [startingGps, setStartingGps] = useState(false);
 
   useEffect(() => {
@@ -72,18 +69,6 @@ export function DrawToolbar() {
       >
         Heatmap
       </button>
-      <select
-        className="draw-toolbar__select"
-        value={mapStyleId}
-        onChange={(event) => setMapStyleId(event.target.value as MapStyleId)}
-        aria-label="Map style"
-      >
-        {(Object.keys(MAP_STYLES) as MapStyleId[]).map((id) => (
-          <option key={id} value={id}>
-            {MAP_STYLES[id].label}
-          </option>
-        ))}
-      </select>
     </div>
   );
 }
