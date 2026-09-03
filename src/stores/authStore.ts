@@ -14,18 +14,29 @@ interface AuthState {
   isReady: boolean;
   isSyncing: boolean;
   syncStatus: string | null;
+  lastSyncedAt: string | null;
   error: string | null;
   isConfigured: boolean;
   init: () => () => void;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  syncNow: () => Promise<void>;
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
+async function runCloudSync(
+  uid: string,
+  onProgress: (message: string) => void,
+): Promise<void> {
+  const routes = await syncRoutesForUser(uid, onProgress);
+  useRouteStore.getState().applyRoutes(routes);
+}
+
+export const useAuthStore = create<AuthState>((set, get) => ({
   user: null,
   isReady: !isFirebaseConfigured,
   isSyncing: false,
   syncStatus: null,
+  lastSyncedAt: null,
   error: null,
   isConfigured: isFirebaseConfigured,
 
@@ -40,11 +51,11 @@ export const useAuthStore = create<AuthState>((set) => ({
 
       if (user) {
         set({ isSyncing: true, syncStatus: 'Starting sync…' });
-        void syncRoutesForUser(user.uid, (syncStatus) => {
+        void runCloudSync(user.uid, (syncStatus) => {
           set({ syncStatus });
         })
-          .then((routes) => {
-            useRouteStore.getState().applyRoutes(routes);
+          .then(() => {
+            set({ lastSyncedAt: new Date().toISOString() });
           })
           .catch((error: unknown) => {
             const message =
@@ -57,7 +68,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         return;
       }
 
-      set({ syncStatus: null, isSyncing: false });
+      set({ syncStatus: null, isSyncing: false, lastSyncedAt: null });
       void useRouteStore.getState().loadRoutes();
     });
   },
@@ -74,8 +85,29 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   signOut: async () => {
-    set({ error: null, syncStatus: null });
+    set({ error: null, syncStatus: null, lastSyncedAt: null });
     await signOutUser();
     await useRouteStore.getState().loadRoutes();
+  },
+
+  syncNow: async () => {
+    const user = get().user;
+    if (!user || get().isSyncing) {
+      return;
+    }
+
+    set({ isSyncing: true, syncStatus: 'Starting sync…', error: null });
+    try {
+      await runCloudSync(user.uid, (syncStatus) => {
+        set({ syncStatus });
+      });
+      set({ lastSyncedAt: new Date().toISOString() });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to sync routes with cloud.';
+      set({ error: message });
+      throw error;
+    } finally {
+      set({ isSyncing: false, syncStatus: null });
+    }
   },
 }));

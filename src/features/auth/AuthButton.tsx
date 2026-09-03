@@ -1,15 +1,31 @@
 import { useState } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 
+function formatLastSyncedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export function AuthButton() {
   const user = useAuthStore((state) => state.user);
   const isReady = useAuthStore((state) => state.isReady);
   const isSyncing = useAuthStore((state) => state.isSyncing);
   const syncStatus = useAuthStore((state) => state.syncStatus);
+  const lastSyncedAt = useAuthStore((state) => state.lastSyncedAt);
   const error = useAuthStore((state) => state.error);
   const isConfigured = useAuthStore((state) => state.isConfigured);
   const signIn = useAuthStore((state) => state.signIn);
   const signOut = useAuthStore((state) => state.signOut);
+  const syncNow = useAuthStore((state) => state.syncNow);
   const [isBusy, setIsBusy] = useState(false);
 
   if (!isConfigured) {
@@ -40,6 +56,17 @@ export function AuthButton() {
     }
   };
 
+  const handleSyncNow = async () => {
+    setIsBusy(true);
+    try {
+      await syncNow();
+    } catch {
+      // Error is stored in authStore.
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const label = user
     ? user.displayName || user.email || 'Signed in'
     : 'Sign in with Google';
@@ -51,7 +78,16 @@ export function AuthButton() {
           <span className="auth-status" title={user.email ?? undefined}>
             {label}
             {isSyncing ? ` · ${syncStatus ?? 'syncing…'}` : ''}
+            {!isSyncing && lastSyncedAt ? ` · synced ${formatLastSyncedAt(lastSyncedAt)}` : ''}
           </span>
+          <button
+            type="button"
+            className="btn btn--ghost auth-btn"
+            onClick={() => void handleSyncNow()}
+            disabled={isBusy || isSyncing}
+          >
+            Sync now
+          </button>
           <button
             type="button"
             className="btn btn--ghost auth-btn"

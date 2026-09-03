@@ -1,14 +1,15 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Map, { type MapRef } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { calculateDistanceMeters } from '../../lib/geo/distance';
-import { fitMapToRoute } from '../../lib/geo/fitBounds';
+import { fitMapToRoute, fitMapToRoutes } from '../../lib/geo/fitBounds';
 import { resolveRoutePlaceName } from '../../lib/geo/geocode';
 import { routeCentroid } from '../../lib/geo/globe';
 import { routesGeometryKey } from '../../lib/geo/routeGeometry';
 import { simplifyLine } from '../../lib/geo/simplify';
 import { useDrawStore } from '../../stores/drawStore';
+import { useMapUiStore } from '../../stores/mapUiStore';
 import { useRouteStore } from '../../stores/routeStore';
 import { pickRouteColor } from '../../types/route';
 import { useDrawKeyboard, useFreehandDraw } from '../draw/useDrawHandlers';
@@ -26,6 +27,7 @@ import {
   useHeatmapLayer,
   useRoutesLayer,
 } from './useMapLayers';
+import { useMyLocationLayer } from './useMyLocation';
 
 interface SaveDialogState {
   open: boolean;
@@ -61,6 +63,8 @@ export function MapView() {
   const pauseGps = useDrawStore((state) => state.pauseGps);
   const clearGpsSession = useDrawStore((state) => state.clearGpsSession);
 
+  const fitAllNonce = useMapUiStore((state) => state.fitAllNonce);
+
   const geometryKey = useMemo(() => routesGeometryKey(routes), [routes]);
 
   const visibleRoutes = useMemo(() => {
@@ -90,6 +94,21 @@ export function MapView() {
     mode === 'edit',
   );
   useFitRouteOnSelect(mapRef, mapLoaded, selectedId);
+  useMyLocationLayer(mapRef, mapLoaded);
+
+  useEffect(() => {
+    if (!mapLoaded || fitAllNonce === 0) {
+      return;
+    }
+
+    const map = mapRef.current?.getMap();
+    if (!map) {
+      return;
+    }
+
+    const routesToFit = routes.filter((route) => !hiddenIds.has(route.properties.id));
+    fitMapToRoutes(map, routesToFit);
+  }, [fitAllNonce, hiddenIds, mapLoaded, routes]);
 
   const openSaveDialog = useCallback(() => {
     const state = useDrawStore.getState();

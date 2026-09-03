@@ -3,6 +3,7 @@ import { calculateDistanceMeters } from '../../lib/geo/distance';
 import { formatDistance } from '../../types/route';
 import { queryGeoPermission } from '../../lib/geo/geolocation';
 import { useDrawStore } from '../../stores/drawStore';
+import { useMapUiStore } from '../../stores/mapUiStore';
 import { useRouteStore } from '../../stores/routeStore';
 
 export function DrawToolbar() {
@@ -12,6 +13,10 @@ export function DrawToolbar() {
   const startGpsRecording = useDrawStore((state) => state.startGpsRecording);
   const heatmapEnabled = useRouteStore((state) => state.heatmapEnabled);
   const toggleHeatmap = useRouteStore((state) => state.toggleHeatmap);
+  const showMyLocation = useMapUiStore((state) => state.showMyLocation);
+  const locationFollow = useMapUiStore((state) => state.locationFollow);
+  const toggleMyLocation = useMapUiStore((state) => state.toggleMyLocation);
+  const toggleLocationFollow = useMapUiStore((state) => state.toggleLocationFollow);
   const [startingGps, setStartingGps] = useState(false);
 
   useEffect(() => {
@@ -69,6 +74,23 @@ export function DrawToolbar() {
       >
         Heatmap
       </button>
+      <span className="draw-toolbar__divider" aria-hidden />
+      <button
+        type="button"
+        className={`btn ${showMyLocation ? 'btn--active' : ''}`}
+        onClick={toggleMyLocation}
+      >
+        My location
+      </button>
+      {showMyLocation && (
+        <button
+          type="button"
+          className={`btn ${locationFollow ? 'btn--active' : ''}`}
+          onClick={toggleLocationFollow}
+        >
+          Follow
+        </button>
+      )}
     </div>
   );
 }

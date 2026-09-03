@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 import { persistRoute, persistRoutes, removeRoute, loadRoutesForCurrentUser } from '../lib/firebase/syncRoutes';
-import { readRouteFiles, type ImportKind } from '../lib/geo/exportImport';
+import { readRouteFiles, type ImportKind, type ReadRouteFilesResult } from '../lib/geo/exportImport';
 import { resolveRoutePlaceName } from '../lib/geo/geocode';
 import { routeCentroid } from '../lib/geo/globe';
-import { extractImportedCreatedAt, getRouteActivityDate } from '../lib/geo/routeDate';
+import { extractImportedCreatedAt, getRouteActivityDate, getRouteTimeKey } from '../lib/geo/routeDate';
 import { thinRoutes } from '../lib/geo/routeGeometry';
 import type { RouteFeature } from '../types/route';
 
@@ -26,6 +26,10 @@ interface RouteState {
     files: File[] | File,
     overwrite: boolean,
     kind?: ImportKind,
+  ) => Promise<{ imported: number; skipped: number }>;
+  applyImportedRoutes: (
+    parsed: ReadRouteFilesResult,
+    overwrite: boolean,
   ) => Promise<{ imported: number; skipped: number }>;
   applyRoutes: (routes: RouteFeature[]) => void;
 }
@@ -212,20 +216,58 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
   importRoutes: async (files, overwrite, kind = 'auto') => {
     const list = Array.isArray(files) ? files : [files];
-    const incoming = await readRouteFiles(list, get().routes.length, kind);
+    const parsed = await readRouteFiles(list, get().routes.length, kind);
+    return get().applyImportedRoutes(parsed, overwrite);
+  },
+
+  applyImportedRoutes: async (parsed, overwrite) => {
+    const { routes: incoming, appleHealth } = parsed;
     const existing = get().routes;
     const existingIds = new Set(existing.map((route) => route.properties.id));
+    const existingByTime = new Map<string, RouteFeature>();
+
+    if (appleHealth) {
+      for (const route of existing) {
+        const timeKey = getRouteTimeKey(route);
+        if (!existingByTime.has(timeKey)) {
+          existingByTime.set(timeKey, route);
+        }
+      }
+    }
 
     const toSave: RouteFeature[] = [];
     let skipped = 0;
 
-    for (const route of incoming) {
+    for (let route of incoming) {
       if (existingIds.has(route.properties.id) && !overwrite) {
         skipped += 1;
         continue;
       }
+
+      if (appleHealth) {
+        const timeKey = getRouteTimeKey(route);
+        const existingAtTime = existingByTime.get(timeKey);
+        if (existingAtTime && existingAtTime.properties.id !== route.properties.id) {
+          if (!overwrite) {
+            skipped += 1;
+            continue;
+          }
+
+          route = {
+            ...route,
+            properties: {
+              ...route.properties,
+              id: existingAtTime.properties.id,
+            },
+          };
+        }
+      }
+
       toSave.push(route);
       existingIds.add(route.properties.id);
+      if (appleHealth) {
+        existingByTime.set(getRouteTimeKey(route), route);
+      }
     }
 
     if (toSave.length > 0) {

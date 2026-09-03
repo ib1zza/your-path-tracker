@@ -252,7 +252,7 @@ async function parseZipRoutes(
   file: File,
   existingCount = 0,
   kind: ImportKind = 'auto',
-): Promise<RouteFeature[]> {
+): Promise<ReadRouteFilesResult> {
   const zip = await JSZip.loadAsync(file);
   const entries = Object.values(zip.files).filter((entry) => !entry.dir);
   const routes: RouteFeature[] = [];
@@ -317,16 +317,22 @@ async function parseZipRoutes(
     throw new Error(errors[0] || 'No valid routes found in the archive');
   }
 
-  return routes;
+  const appleHealth = kind === 'health' || (kind === 'auto' && healthRoutes.length > 0);
+  return { routes, appleHealth };
 }
 
 export type ImportKind = 'auto' | 'gpx' | 'geojson' | 'health' | 'kml' | 'tcx';
+
+export interface ReadRouteFilesResult {
+  routes: RouteFeature[];
+  appleHealth: boolean;
+}
 
 export async function readRouteFile(
   file: File,
   existingCount = 0,
   kind: ImportKind = 'auto',
-): Promise<RouteFeature[]> {
+): Promise<ReadRouteFilesResult> {
   const lower = file.name.toLowerCase();
   const resolved: ImportKind =
     kind !== 'auto'
@@ -348,29 +354,32 @@ export async function readRouteFile(
   const text = await file.text();
 
   if (resolved === 'gpx') {
-    return parseGpxText(text, existingCount);
+    return { routes: parseGpxText(text, existingCount), appleHealth: false };
   }
   if (resolved === 'kml') {
-    return parseKmlText(text, existingCount);
+    return { routes: parseKmlText(text, existingCount), appleHealth: false };
   }
   if (resolved === 'tcx') {
-    return parseTcxText(text, existingCount);
+    return { routes: parseTcxText(text, existingCount), appleHealth: false };
   }
 
-  return parseRouteCollection(text, existingCount);
+  return { routes: parseRouteCollection(text, existingCount), appleHealth: false };
 }
 
 export async function readRouteFiles(
   files: File[],
   existingCount = 0,
   kind: ImportKind = 'auto',
-): Promise<RouteFeature[]> {
+): Promise<ReadRouteFilesResult> {
   const routes: RouteFeature[] = [];
+  let appleHealth = false;
   const errors: string[] = [];
 
   for (const file of files) {
     try {
-      routes.push(...(await readRouteFile(file, existingCount + routes.length, kind)));
+      const result = await readRouteFile(file, existingCount + routes.length, kind);
+      routes.push(...result.routes);
+      appleHealth = appleHealth || result.appleHealth;
     } catch (error) {
       errors.push(`${file.name}: ${error instanceof Error ? error.message : 'failed'}`);
     }
@@ -380,5 +389,5 @@ export async function readRouteFiles(
     throw new Error(errors[0] || 'No valid routes found');
   }
 
-  return routes;
+  return { routes, appleHealth };
 }

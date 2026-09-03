@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { exportAllRoutes, exportRoute, type ImportKind } from '../../lib/geo/exportImport';
+import { exportAllRoutes, exportRoute, readRouteFiles, type ImportKind } from '../../lib/geo/exportImport';
 import {
   filterRoutesByDateRange,
   groupKeyForRoute,
@@ -7,6 +7,7 @@ import {
   type RouteGroupBy,
 } from '../../lib/geo/routeDate';
 import { useDrawStore } from '../../stores/drawStore';
+import { useMapUiStore } from '../../stores/mapUiStore';
 import { useRouteStore } from '../../stores/routeStore';
 import type { RouteFeature } from '../../types/route';
 import { RouteItem } from './RouteItem';
@@ -79,7 +80,11 @@ export function RoutePanel() {
   const [groupBy, setGroupBy] = useState<RouteGroupBy>('month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  const requestFitAllRoutes = useMapUiStore((state) => state.requestFitAllRoutes);
 
   const routes = useRouteStore((state) => state.routes);
   const selectedId = useRouteStore((state) => state.selectedId);
@@ -89,12 +94,31 @@ export function RoutePanel() {
   const deleteRoute = useRouteStore((state) => state.deleteRoute);
   const toggleVisibility = useRouteStore((state) => state.toggleVisibility);
   const isVisible = useRouteStore((state) => state.isVisible);
-  const importRoutes = useRouteStore((state) => state.importRoutes);
+  const applyImportedRoutes = useRouteStore((state) => state.applyImportedRoutes);
   const startEdit = useDrawStore((state) => state.startEdit);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim().toLowerCase());
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
+  const searchedRoutes = useMemo(() => {
+    if (!debouncedSearch) {
+      return routes;
+    }
+
+    return routes.filter((route) => {
+      const name = route.properties.name.toLowerCase();
+      const place = route.properties.placeName?.toLowerCase() ?? '';
+      return name.includes(debouncedSearch) || place.includes(debouncedSearch);
+    });
+  }, [debouncedSearch, routes]);
+
   const filteredRoutes = useMemo(
-    () => filterRoutesByDateRange(routes, dateFrom || null, dateTo || null),
-    [dateFrom, dateTo, routes],
+    () => filterRoutesByDateRange(searchedRoutes, dateFrom || null, dateTo || null),
+    [dateFrom, dateTo, searchedRoutes],
   );
 
   const groups = useMemo(() => groupRoutes(filteredRoutes, groupBy), [filteredRoutes, groupBy]);
@@ -128,12 +152,16 @@ export function RoutePanel() {
     event.target.value = '';
     if (files.length === 0) return;
 
-    const overwrite = window.confirm(
-      'If imported routes have the same IDs as existing ones, overwrite them?',
-    );
+    const importKind = pendingKindRef.current;
 
     try {
-      const result = await importRoutes(files, overwrite, pendingKindRef.current);
+      const parsed = await readRouteFiles(files, routes.length, importKind);
+      const overwrite = window.confirm(
+        parsed.appleHealth
+          ? 'Apple Health routes are matched by start time. Replace routes that already exist at the same time? (Cancel = skip duplicates and keep your edits)'
+          : 'If imported routes have the same IDs as existing ones, overwrite them?',
+      );
+      const result = await applyImportedRoutes(parsed, overwrite);
       setImportMessage(`Imported ${result.imported}, skipped ${result.skipped}`);
     } catch (error) {
       setImportMessage(error instanceof Error ? error.message : 'Import failed');
@@ -148,6 +176,8 @@ export function RoutePanel() {
     setDateFrom('');
     setDateTo('');
   };
+
+  const visibleRouteCount = routes.filter((route) => isVisible(route.properties.id)).length;
 
   const renderRouteItem = (route: RouteFeature) => (
     <div key={route.properties.id} data-route-id={route.properties.id}>
@@ -178,6 +208,16 @@ export function RoutePanel() {
             properties: {
               ...route.properties,
               notes: notes || undefined,
+              updatedAt: new Date().toISOString(),
+            },
+          })
+        }
+        onColorChange={(color) =>
+          void updateRoute({
+            ...route,
+            properties: {
+              ...route.properties,
+              color,
               updatedAt: new Date().toISOString(),
             },
           })
@@ -243,6 +283,14 @@ export function RoutePanel() {
         <button
           type="button"
           className="btn btn--ghost"
+          disabled={visibleRouteCount === 0}
+          onClick={requestFitAllRoutes}
+        >
+          Show all
+        </button>
+        <button
+          type="button"
+          className="btn btn--ghost"
           disabled={routes.length === 0}
           onClick={() => exportAllRoutes(routes)}
         >
@@ -256,6 +304,27 @@ export function RoutePanel() {
           onChange={(event) => void handleImportFile(event)}
         />
       </div>
+
+      {routes.length > 0 && (
+        <div className="route-panel__search">
+          <input
+            type="search"
+            className="route-panel__search-input"
+            placeholder="Search by name or place…"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              className="btn btn--ghost btn--tiny route-panel__search-clear"
+              onClick={() => setSearchQuery('')}
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {routes.length > 0 && (
         <div className="route-panel__filters">
@@ -315,7 +384,9 @@ export function RoutePanel() {
           </p>
         )}
         {!isLoading && routes.length > 0 && filteredRoutes.length === 0 && (
-          <p className="route-panel__empty">No routes in this date range.</p>
+          <p className="route-panel__empty">
+            {debouncedSearch ? 'No routes match your search.' : 'No routes in this date range.'}
+          </p>
         )}
 
         {groups.map((group) => {

@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from 'react';
-import { formatDate, formatDistance } from '../../types/route';
+import { formatDate, formatDistance, ROUTE_COLORS } from '../../types/route';
 import type { RouteFeature } from '../../types/route';
 
 interface RouteItemProps {
@@ -11,6 +11,7 @@ interface RouteItemProps {
   onDelete: () => void;
   onRename: (name: string) => void;
   onNotesChange: (notes: string) => void;
+  onColorChange: (color: string) => void;
   onEditGeometry: () => void;
   onExport: () => void;
 }
@@ -24,6 +25,7 @@ function RouteItemComponent({
   onDelete,
   onRename,
   onNotesChange,
+  onColorChange,
   onEditGeometry,
   onExport,
 }: RouteItemProps) {
@@ -92,6 +94,25 @@ function RouteItemComponent({
           </span>
         </span>
       </button>
+
+      {isSelected && (
+        <div className="route-item__colors">
+          <span>Color</span>
+          <div className="route-item__swatches">
+            {ROUTE_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                className={`route-item__swatch ${route.properties.color === color ? 'route-item__swatch--active' : ''}`}
+                style={{ backgroundColor: color }}
+                aria-label={`Set color ${color}`}
+                aria-pressed={route.properties.color === color}
+                onClick={() => onColorChange(color)}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {isSelected && (
         <label className="route-item__notes">

@@ -3,6 +3,36 @@ import type { RouteFeature } from '../../types/route';
 export type RouteGroupBy = 'none' | 'month' | 'year';
 
 const NAME_DATE_RE = /(\d{4})-(\d{2})-(\d{2})/;
+const NAME_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[_T ](\d{2})-(\d{2})-(\d{2})/;
+
+function roundToMinuteIso(date: Date): string {
+  const copy = new Date(date);
+  copy.setSeconds(0, 0);
+  return copy.toISOString();
+}
+
+function extractTimeFromLabel(label: string | undefined): string | undefined {
+  if (!label) {
+    return undefined;
+  }
+
+  const dateTimeMatch = label.match(NAME_DATETIME_RE);
+  if (dateTimeMatch) {
+    const [, year, month, day, hour, minute, second] = dateTimeMatch;
+    const parsed = Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
+    if (!Number.isNaN(parsed)) {
+      return roundToMinuteIso(new Date(parsed));
+    }
+  }
+
+  const dateMatch = label.match(NAME_DATE_RE);
+  if (dateMatch) {
+    const [, year, month, day] = dateMatch;
+    return roundToMinuteIso(new Date(`${year}-${month}-${day}T12:00:00`));
+  }
+
+  return undefined;
+}
 
 function firstTimeValue(value: unknown): string | undefined {
   if (typeof value === 'string' && value.trim()) {
@@ -37,12 +67,10 @@ export function extractImportedCreatedAt(
     }
   }
 
-  const name = typeof properties?.name === 'string' ? properties.name : fallbackName;
-  if (name) {
-    const match = name.match(NAME_DATE_RE);
-    if (match) {
-      return new Date(`${match[1]}-${match[2]}-${match[3]}T12:00:00`).toISOString();
-    }
+  const name = typeof properties?.name === 'string' ? properties.name : undefined;
+  const fromName = extractTimeFromLabel(name) ?? extractTimeFromLabel(fallbackName);
+  if (fromName) {
+    return fromName;
   }
 
   return undefined;
@@ -56,6 +84,21 @@ export function getRouteActivityDate(route: RouteFeature): Date {
 
   const parsed = Date.parse(route.properties.createdAt);
   return Number.isNaN(parsed) ? new Date() : new Date(parsed);
+}
+
+/** Start-time key (minute precision) for Apple Health import dedup. */
+export function getRouteTimeKey(route: RouteFeature): string {
+  const fromName = extractTimeFromLabel(route.properties.name);
+  if (fromName) {
+    return fromName;
+  }
+
+  const parsed = Date.parse(route.properties.createdAt);
+  if (!Number.isNaN(parsed)) {
+    return roundToMinuteIso(new Date(parsed));
+  }
+
+  return toDateInputValue(getRouteActivityDate(route));
 }
 
 export function toDateInputValue(date: Date): string {

@@ -207,10 +207,39 @@ a {
 
 .route-panel__toolbar {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   padding: 0.75rem 1rem;
   border-bottom: 1px solid #eef2f7;
   position: relative;
+}
+
+.route-panel__search {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid #eef2f7;
+}
+
+.route-panel__search-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem;
+  font: inherit;
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.route-panel__search-input:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+}
+
+.route-panel__search-clear {
+  flex-shrink: 0;
 }
 
 .import-menu {
@@ -444,6 +473,35 @@ a {
   flex-wrap: wrap;
   gap: 0.25rem;
   padding: 0 0.5rem 0.5rem;
+}
+
+.route-item__colors {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem 0.5rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.route-item__swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.route-item__swatch {
+  width: 1.25rem;
+  height: 1.25rem;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.route-item__swatch--active {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 1px #ffffff;
 }
 
 .route-item__notes {
