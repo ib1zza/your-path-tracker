@@ -8,6 +8,8 @@ import {
 import { readRouteFiles, type ImportKind } from '../lib/geo/exportImport';
 import { resolveRoutePlaceName } from '../lib/geo/geocode';
 import { routeCentroid } from '../lib/geo/globe';
+import { extractImportedCreatedAt, getRouteActivityDate } from '../lib/geo/routeDate';
+import { thinRoutes } from '../lib/geo/routeGeometry';
 import type { MapStyleId } from '../features/map/mapConfig';
 import type { RouteFeature } from '../types/route';
 
@@ -28,10 +30,17 @@ interface RouteState {
   toggleHeatmap: () => void;
   setMapStyleId: (id: MapStyleId) => void;
   ensurePlaceNames: () => Promise<void>;
-  importRoutes: (files: File[] | File, overwrite: boolean, kind?: ImportKind) => Promise<{ imported: number; skipped: number }>;
+  importRoutes: (
+    files: File[] | File,
+    overwrite: boolean,
+    kind?: ImportKind,
+  ) => Promise<{ imported: number; skipped: number }>;
 }
 
 const MAP_STYLE_KEY = 'path-tracker-map-style';
+const PLACE_NAME_GAP_MS = 1100;
+
+let placeNamesInFlight: Promise<void> | null = null;
 
 function loadMapStyle(): MapStyleId {
   const value = localStorage.getItem(MAP_STYLE_KEY);
@@ -39,6 +48,12 @@ function loadMapStyle(): MapStyleId {
     return value;
   }
   return 'osm';
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }
 
 export const useRouteStore = create<RouteState>((set, get) => ({
@@ -51,15 +66,65 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
   loadRoutes: async () => {
     set({ isLoading: true });
-    const routes = await getAllRoutes();
+    const loaded = await getAllRoutes();
+    const { routes: thinned, changed: thinnedChanged } = thinRoutes(loaded);
+
+    // Backfill activity dates from GPX/Health-style names when createdAt is just import time.
+    const dateFixed: RouteFeature[] = [];
+    const withDates = thinned.map((route) => {
+      const inferred = extractImportedCreatedAt(
+        { name: route.properties.name },
+        route.properties.name,
+      );
+      if (!inferred) return route;
+      const current = Date.parse(route.properties.createdAt);
+      const inferredTime = Date.parse(inferred);
+      // If name encodes a date far from createdAt, prefer the name date.
+      if (
+        Number.isNaN(current) ||
+        Math.abs(current - inferredTime) > 1000 * 60 * 60 * 36
+      ) {
+        const updated: RouteFeature = {
+          ...route,
+          properties: {
+            ...route.properties,
+            createdAt: inferred,
+          },
+        };
+        dateFixed.push(updated);
+        return updated;
+      }
+      return route;
+    });
+
+    const changedMap = new Map<string, RouteFeature>();
+    for (const route of [...thinnedChanged, ...dateFixed]) {
+      changedMap.set(route.properties.id, route);
+    }
+    const changed = [...changedMap.values()];
+    if (changed.length > 0) {
+      await saveRoutes(changed);
+    }
+
+    // Newest activity first.
+    const routes = [...withDates].sort(
+      (a, b) => getRouteActivityDate(b).getTime() - getRouteActivityDate(a).getTime(),
+    );
+
     set({ routes, isLoading: false });
-    void get().ensurePlaceNames();
+    // Defer geocoding so the UI stays interactive after load/import.
+    window.setTimeout(() => {
+      void get().ensurePlaceNames();
+    }, 0);
   },
 
   addRoute: async (route) => {
-    await saveRoute(route);
-    set((state) => ({ routes: [route, ...state.routes] }));
-    void get().ensurePlaceNames();
+    const thinned = thinRoutes([route]).routes[0] ?? route;
+    await saveRoute(thinned);
+    set((state) => ({ routes: [thinned, ...state.routes] }));
+    window.setTimeout(() => {
+      void get().ensurePlaceNames();
+    }, 0);
   },
 
   updateRoute: async (route) => {
@@ -107,31 +172,57 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   ensurePlaceNames: async () => {
-    const missing = get().routes.filter((route) => !route.properties.placeName);
-    for (const route of missing) {
-      const center = routeCentroid(route);
-      if (!center) continue;
-      try {
-        const placeName = await resolveRoutePlaceName(center[0], center[1]);
-        if (!placeName) continue;
-        const updated: RouteFeature = {
-          ...route,
-          properties: {
-            ...route.properties,
-            placeName,
-            updatedAt: new Date().toISOString(),
-          },
-        };
-        await saveRoute(updated);
-        set((state) => ({
-          routes: state.routes.map((item) =>
-            item.properties.id === updated.properties.id ? updated : item,
-          ),
-        }));
-      } catch {
-        // Nominatim may rate-limit; keep going for remaining routes.
-      }
+    if (placeNamesInFlight) {
+      return placeNamesInFlight;
     }
+
+    placeNamesInFlight = (async () => {
+      const missing = get().routes.filter((route) => !route.properties.placeName);
+      if (missing.length === 0) {
+        return;
+      }
+
+      const updates = new Map<string, RouteFeature>();
+
+      for (let index = 0; index < missing.length; index += 1) {
+        const route = missing[index];
+        const center = routeCentroid(route);
+        if (!center) continue;
+
+        try {
+          const placeName = await resolveRoutePlaceName(center[0], center[1]);
+          if (!placeName) continue;
+          updates.set(route.properties.id, {
+            ...route,
+            properties: {
+              ...route.properties,
+              placeName,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+        } catch {
+          // Nominatim may rate-limit; keep going for remaining routes.
+        }
+
+        if (index < missing.length - 1) {
+          await sleep(PLACE_NAME_GAP_MS);
+        }
+      }
+
+      if (updates.size === 0) {
+        return;
+      }
+
+      const updatedList = [...updates.values()];
+      await saveRoutes(updatedList);
+      set((state) => ({
+        routes: state.routes.map((item) => updates.get(item.properties.id) ?? item),
+      }));
+    })().finally(() => {
+      placeNamesInFlight = null;
+    });
+
+    return placeNamesInFlight;
   },
 
   importRoutes: async (files, overwrite, kind = 'auto') => {
@@ -153,7 +244,8 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
 
     if (toSave.length > 0) {
-      await saveRoutes(toSave);
+      const thinned = thinRoutes(toSave).routes;
+      await saveRoutes(thinned);
       await get().loadRoutes();
     }
 

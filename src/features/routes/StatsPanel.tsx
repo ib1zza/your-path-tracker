@@ -1,10 +1,21 @@
 import { useMemo } from 'react';
 import { computeRouteStats } from '../../lib/geo/stats';
+import { routesGeometryKey } from '../../lib/geo/routeGeometry';
 import { useRouteStore } from '../../stores/routeStore';
 
 export function StatsPanel() {
   const routes = useRouteStore((state) => state.routes);
-  const stats = useMemo(() => computeRouteStats(routes), [routes]);
+  const geometryKey = useMemo(() => routesGeometryKey(routes), [routes]);
+  const totalDistance = useMemo(
+    () => routes.reduce((sum, route) => sum + (route.properties.distanceMeters || 0), 0),
+    [routes],
+  );
+  const stats = useMemo(
+    () => computeRouteStats(routes),
+    // geometryKey + distance cover geometry/stats changes; placeName updates are ignored.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [geometryKey, routes.length, totalDistance],
+  );
 
   if (routes.length === 0) {
     return null;

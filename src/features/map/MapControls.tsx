@@ -1,6 +1,7 @@
 import { calculateDistanceMeters } from '../../lib/geo/distance';
 import { formatDistance } from '../../types/route';
 import { useDrawStore } from '../../stores/drawStore';
+import { useState } from 'react';
 
 interface MapControlsProps {
   onFinish: () => void;
@@ -9,8 +10,11 @@ interface MapControlsProps {
 export function MapControls({ onFinish }: MapControlsProps) {
   const mode = useDrawStore((state) => state.mode);
   const points = useDrawStore((state) => state.points);
+  const selectedPointIndex = useDrawStore((state) => state.selectedPointIndex);
   const cancel = useDrawStore((state) => state.cancel);
   const undoLastPoint = useDrawStore((state) => state.undoLastPoint);
+  const removeSelectedPoint = useDrawStore((state) => state.removeSelectedPoint);
+  const cleanGpsSpikes = useDrawStore((state) => state.cleanGpsSpikes);
   const gpsError = useDrawStore((state) => state.gpsError);
   const gpsPaused = useDrawStore((state) => state.gpsPaused);
   const gpsFollow = useDrawStore((state) => state.gpsFollow);
@@ -20,6 +24,7 @@ export function MapControls({ onFinish }: MapControlsProps) {
   const resumeGps = useDrawStore((state) => state.resumeGps);
   const setGpsFollow = useDrawStore((state) => state.setGpsFollow);
   const startGpsRecording = useDrawStore((state) => state.startGpsRecording);
+  const [cleanMessage, setCleanMessage] = useState<string | null>(null);
 
   if (mode === 'none') {
     return null;
@@ -38,12 +43,33 @@ export function MapControls({ onFinish }: MapControlsProps) {
       : mode === 'freehand'
         ? 'Hold and drag to draw. Release to finish. Backspace / Ctrl+Z to undo.'
         : mode === 'edit'
-          ? 'Click to append points to this route. Undo removes the last point. Save when done.'
+          ? 'Drag points to move. Click a point + Delete to remove. Double-click deletes. Shift+click adds. Clean spikes removes GPS jumps.'
           : 'Keep this tab open while walking. Location stays allowed after the first grant.';
+
+  const handleCleanSpikes = () => {
+    const removed = cleanGpsSpikes();
+    setCleanMessage(
+      removed > 0 ? `Removed ${removed} spike point${removed === 1 ? '' : 's'}` : 'No spikes found',
+    );
+    window.setTimeout(() => setCleanMessage(null), 2500);
+  };
 
   return (
     <div className="map-controls">
       <span className="map-controls__hint">{hint}</span>
+
+      {mode === 'edit' && (
+        <div className="edit-panel">
+          <div className="edit-panel__row">
+            <strong>Editing path</strong>
+            <span>
+              {points.length} pts · {distance}
+              {selectedPointIndex != null ? ` · point #${selectedPointIndex + 1}` : ''}
+            </span>
+          </div>
+          {cleanMessage && <p className="edit-panel__note">{cleanMessage}</p>}
+        </div>
+      )}
 
       {mode === 'gps' && (
         <div className="gps-panel">
@@ -81,7 +107,22 @@ export function MapControls({ onFinish }: MapControlsProps) {
         <button type="button" className="btn btn--ghost" onClick={cancel}>
           Cancel
         </button>
-        {canUndo && (
+        {mode === 'edit' && (
+          <>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={points.length <= 2}
+              onClick={removeSelectedPoint}
+            >
+              {selectedPointIndex != null ? 'Delete point' : 'Delete last point'}
+            </button>
+            <button type="button" className="btn btn--ghost" onClick={handleCleanSpikes}>
+              Clean spikes
+            </button>
+          </>
+        )}
+        {canUndo && mode !== 'edit' && (
           <button type="button" className="btn btn--ghost" onClick={undoLastPoint}>
             Undo last point
           </button>

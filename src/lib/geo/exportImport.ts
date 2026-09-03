@@ -3,6 +3,8 @@ import JSZip from 'jszip';
 import { v4 as uuidv4 } from 'uuid';
 import type { Feature, FeatureCollection, Geometry, LineString, MultiLineString } from 'geojson';
 import { calculateDistanceMeters } from './distance';
+import { extractImportedCreatedAt } from './routeDate';
+import { simplifyLine } from './simplify';
 import { pickRouteColor, type RouteCollection, type RouteFeature } from '../../types/route';
 
 function downloadJson(data: unknown, filename: string): void {
@@ -77,18 +79,25 @@ function normalizeImportedFeature(
       ? feature.properties.color
       : pickRouteColor(existingCount + index);
 
-  return toLineStrings(feature.geometry).map((geometry, partIndex) => {
+  return toLineStrings(feature.geometry).map((rawGeometry, partIndex) => {
     const id = partIndex === 0 ? baseId : `${baseId}-${partIndex + 1}`;
     const name = partIndex === 0 ? baseName : `${baseName} (${partIndex + 1})`;
+    const coordinates = simplifyLine(rawGeometry.coordinates, 0.00008);
+    const geometry = {
+      type: 'LineString' as const,
+      coordinates: coordinates.length >= 2 ? coordinates : rawGeometry.coordinates,
+    };
+    const createdAt =
+      extractImportedCreatedAt(
+        feature.properties as Record<string, unknown> | null | undefined,
+        baseName,
+      ) ?? now;
     return {
       type: 'Feature',
       properties: {
         id,
         name,
-        createdAt:
-          typeof feature.properties?.createdAt === 'string'
-            ? feature.properties.createdAt
-            : now,
+        createdAt,
         updatedAt: now,
         color,
         notes,
@@ -130,7 +139,11 @@ export function parseRouteCollection(text: string, existingCount = 0): RouteFeat
   throw new Error('Expected GeoJSON Feature or FeatureCollection');
 }
 
-export function parseGpxText(text: string, existingCount = 0): RouteFeature[] {
+export function parseGpxText(
+  text: string,
+  existingCount = 0,
+  fallbackName?: string,
+): RouteFeature[] {
   const doc = parseXml(text, 'Invalid GPX file');
   const converted = gpx(doc) as FeatureCollection<Geometry>;
   const lineFeatures = converted.features.filter(isLooseRouteFeature);
@@ -139,9 +152,21 @@ export function parseGpxText(text: string, existingCount = 0): RouteFeature[] {
     throw new Error('No tracks or routes found in GPX');
   }
 
-  return lineFeatures.flatMap((feature, index) =>
-    normalizeImportedFeature(feature, index, existingCount),
-  );
+  return lineFeatures.flatMap((feature, index) => {
+    if (
+      fallbackName &&
+      !(typeof feature.properties?.name === 'string' && feature.properties.name.trim())
+    ) {
+      feature = {
+        ...feature,
+        properties: {
+          ...(feature.properties ?? {}),
+          name: fallbackName.replace(/\.[^.]+$/, '').split('/').pop() || fallbackName,
+        },
+      };
+    }
+    return normalizeImportedFeature(feature, index, existingCount);
+  });
 }
 
 function parseXml(text: string, errorMessage: string): Document {
@@ -177,20 +202,25 @@ export function parseTcxText(text: string, existingCount = 0): RouteFeature[] {
 
   sources.forEach((source, index) => {
     const points = [...source.getElementsByTagName('Trackpoint')];
-    const coordinates: [number, number][] = [];
+    const rawCoordinates: [number, number][] = [];
 
     for (const point of points) {
       const lat = Number(point.getElementsByTagName('LatitudeDegrees')[0]?.textContent);
       const lng = Number(point.getElementsByTagName('LongitudeDegrees')[0]?.textContent);
       if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        coordinates.push([lng, lat]);
+        rawCoordinates.push([lng, lat]);
       }
     }
 
-    if (coordinates.length < 2) {
+    if (rawCoordinates.length < 2) {
       return;
     }
 
+    const simplified = simplifyLine(rawCoordinates, 0.00008);
+    const coordinates =
+      simplified.length >= 2
+        ? (simplified as [number, number][])
+        : rawCoordinates;
     const name =
       source.getElementsByTagName('Name')[0]?.textContent?.trim() ||
       source.getAttribute('Sport') ||
@@ -270,7 +300,7 @@ async function parseZipRoutes(
       const lower = entry.name.toLowerCase();
       const offset = existingCount + routes.length;
       if (lower.endsWith('.gpx')) {
-        routes.push(...parseGpxText(text, offset));
+        routes.push(...parseGpxText(text, offset, entry.name));
       } else if (lower.endsWith('.kml')) {
         routes.push(...parseKmlText(text, offset));
       } else if (lower.endsWith('.tcx')) {

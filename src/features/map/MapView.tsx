@@ -6,16 +6,19 @@ import { calculateDistanceMeters } from '../../lib/geo/distance';
 import { fitMapToRoute } from '../../lib/geo/fitBounds';
 import { resolveRoutePlaceName } from '../../lib/geo/geocode';
 import { routeCentroid } from '../../lib/geo/globe';
+import { routesGeometryKey } from '../../lib/geo/routeGeometry';
 import { simplifyLine } from '../../lib/geo/simplify';
 import { useDrawStore } from '../../stores/drawStore';
 import { useRouteStore } from '../../stores/routeStore';
 import { pickRouteColor } from '../../types/route';
 import { useDrawKeyboard, useFreehandDraw } from '../draw/useDrawHandlers';
 import { useGpsDraw } from '../draw/useGpsDraw';
+import { useVertexEdit } from '../draw/useVertexEdit';
 import { DEFAULT_MAP_VIEW, MAP_STYLES } from './mapConfig';
 import { MapControls } from './MapControls';
 import { PlaceSearch } from './PlaceSearch';
 import {
+  ROUTES_HIT_LAYER_ID,
   ROUTES_LINE_LAYER_ID,
   ROUTES_OUTLINE_LAYER_ID,
   useDrawPreviewLayer,
@@ -51,6 +54,7 @@ export function MapView() {
   const mode = useDrawStore((state) => state.mode);
   const points = useDrawStore((state) => state.points);
   const editingRouteId = useDrawStore((state) => state.editingRouteId);
+  const selectedPointIndex = useDrawStore((state) => state.selectedPointIndex);
   const addPoint = useDrawStore((state) => state.addPoint);
   const resetDraw = useDrawStore((state) => state.reset);
   const cancelDraw = useDrawStore((state) => state.cancel);
@@ -58,10 +62,19 @@ export function MapView() {
   const pauseGps = useDrawStore((state) => state.pauseGps);
   const clearGpsSession = useDrawStore((state) => state.clearGpsSession);
 
-  const visibleRoutes = useMemo(
-    () => routes.filter((route) => !hiddenIds.has(route.properties.id)),
-    [hiddenIds, routes],
-  );
+  const geometryKey = useMemo(() => routesGeometryKey(routes), [routes]);
+
+  const visibleRoutes = useMemo(() => {
+    return routes.filter((route) => {
+      if (hiddenIds.has(route.properties.id)) return false;
+      // While editing, the live preview replaces the saved geometry.
+      if (editingRouteId && route.properties.id === editingRouteId) return false;
+      // Focus selected route: temporarily hide the rest.
+      if (selectedId && route.properties.id !== selectedId) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingRouteId, geometryKey, hiddenIds, selectedId]);
 
   const drawPoints = useMemo(
     () => points.map((point) => [point[0], point[1]] as [number, number]),
@@ -70,7 +83,13 @@ export function MapView() {
 
   useRoutesLayer(mapRef, mapLoaded, visibleRoutes, selectedId, heatmapEnabled);
   useHeatmapLayer(mapRef, mapLoaded, visibleRoutes, heatmapEnabled);
-  useDrawPreviewLayer(mapRef, mapLoaded, drawPoints);
+  useDrawPreviewLayer(
+    mapRef,
+    mapLoaded,
+    drawPoints,
+    selectedPointIndex,
+    mode === 'edit',
+  );
   useFitRouteOnSelect(mapRef, mapLoaded, selectedId);
 
   const openSaveDialog = useCallback(() => {
@@ -129,6 +148,7 @@ export function MapView() {
 
   useFreehandDraw(mapRef, mapLoaded, handleFreehandComplete);
   useGpsDraw(mapRef, mapLoaded);
+  useVertexEdit(mapRef, mapLoaded);
   useDrawKeyboard(openSaveDialog);
 
   useEffect(() => {
@@ -208,11 +228,17 @@ export function MapView() {
   };
 
   const handleMapClick = (event: {
+    point: { x: number; y: number };
     lngLat: { toArray: () => [number, number] };
     features?: Array<{ layer?: { id?: string }; properties?: Record<string, unknown> }>;
   }) => {
-    if (mode === 'click' || mode === 'edit') {
+    if (mode === 'click') {
       addPoint(event.lngLat.toArray());
+      return;
+    }
+
+    if (mode === 'edit') {
+      // Vertex editing is handled by useVertexEdit.
       return;
     }
 
@@ -220,16 +246,40 @@ export function MapView() {
       return;
     }
 
-    const feature = event.features?.find(
-      (item) =>
-        item.layer?.id === ROUTES_LINE_LAYER_ID || item.layer?.id === ROUTES_OUTLINE_LAYER_ID,
-    );
+    const map = mapRef.current?.getMap();
+    let routeId: string | null = null;
 
-    if (feature?.properties?.id) {
-      selectRoute(String(feature.properties.id));
-    } else {
-      selectRoute(null);
+    if (map) {
+      const pad = 10;
+      const layers = [ROUTES_HIT_LAYER_ID, ROUTES_LINE_LAYER_ID, ROUTES_OUTLINE_LAYER_ID].filter(
+        (id) => Boolean(map.getLayer(id)),
+      );
+      if (layers.length > 0) {
+        const hits = map.queryRenderedFeatures(
+          [
+            [event.point.x - pad, event.point.y - pad],
+            [event.point.x + pad, event.point.y + pad],
+          ],
+          { layers },
+        );
+        const hit = hits.find((feature) => feature.properties?.id);
+        if (hit?.properties?.id != null) {
+          routeId = String(hit.properties.id);
+        }
+      }
     }
+
+    if (!routeId) {
+      const feature = event.features?.find(
+        (item) =>
+          item.layer?.id === ROUTES_LINE_LAYER_ID || item.layer?.id === ROUTES_OUTLINE_LAYER_ID,
+      );
+      if (feature?.properties?.id != null) {
+        routeId = String(feature.properties.id);
+      }
+    }
+
+    selectRoute(routeId);
   };
 
   return (
@@ -244,9 +294,17 @@ export function MapView() {
         onLoad={() => setMapLoaded(true)}
         onClick={handleMapClick}
         interactiveLayerIds={
-          mode === 'none' ? [ROUTES_LINE_LAYER_ID, ROUTES_OUTLINE_LAYER_ID] : undefined
+          mode === 'none'
+            ? [ROUTES_HIT_LAYER_ID, ROUTES_LINE_LAYER_ID, ROUTES_OUTLINE_LAYER_ID]
+            : undefined
         }
-        cursor={mode === 'click' || mode === 'freehand' || mode === 'edit' ? 'crosshair' : 'grab'}
+        cursor={
+          mode === 'click' || mode === 'freehand'
+            ? 'crosshair'
+            : mode === 'edit'
+              ? 'crosshair'
+              : 'grab'
+        }
       />
 
       <div className="map-view__search">

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { formatDate, formatDistance } from '../../types/route';
 import type { RouteFeature } from '../../types/route';
 
@@ -15,7 +15,7 @@ interface RouteItemProps {
   onExport: () => void;
 }
 
-export function RouteItem({
+function RouteItemComponent({
   route,
   isSelected,
   isVisible,
@@ -136,3 +136,5 @@ export function RouteItem({
     </article>
   );
 }
+
+export const RouteItem = memo(RouteItemComponent);

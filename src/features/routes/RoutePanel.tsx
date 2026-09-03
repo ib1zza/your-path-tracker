@@ -1,7 +1,14 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { exportAllRoutes, exportRoute, type ImportKind } from '../../lib/geo/exportImport';
+import {
+  filterRoutesByDateRange,
+  groupKeyForRoute,
+  groupRoutes,
+  type RouteGroupBy,
+} from '../../lib/geo/routeDate';
 import { useDrawStore } from '../../stores/drawStore';
 import { useRouteStore } from '../../stores/routeStore';
+import type { RouteFeature } from '../../types/route';
 import { RouteItem } from './RouteItem';
 import { StatsPanel } from './StatsPanel';
 
@@ -16,7 +23,8 @@ const IMPORT_OPTIONS: Array<{
     kind: 'auto',
     label: 'Auto-detect',
     hint: 'GPX, GeoJSON, KML, TCX or ZIP',
-    accept: '.geojson,.json,.gpx,.kml,.kmz,.tcx,.zip,application/geo+json,application/gpx+xml,application/zip',
+    accept:
+      '.geojson,.json,.gpx,.kml,.kmz,.tcx,.zip,application/geo+json,application/gpx+xml,application/zip',
     multiple: true,
   },
   {
@@ -56,11 +64,22 @@ const IMPORT_OPTIONS: Array<{
   },
 ];
 
+const GROUP_OPTIONS: Array<{ value: RouteGroupBy; label: string }> = [
+  { value: 'month', label: 'Month' },
+  { value: 'year', label: 'Year' },
+  { value: 'none', label: 'Flat' },
+];
+
 export function RoutePanel() {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
   const pendingKindRef = useRef<ImportKind>('auto');
   const [importOpen, setImportOpen] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
+  const [groupBy, setGroupBy] = useState<RouteGroupBy>('month');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const routes = useRouteStore((state) => state.routes);
   const selectedId = useRouteStore((state) => state.selectedId);
@@ -72,6 +91,27 @@ export function RoutePanel() {
   const isVisible = useRouteStore((state) => state.isVisible);
   const importRoutes = useRouteStore((state) => state.importRoutes);
   const startEdit = useDrawStore((state) => state.startEdit);
+
+  const filteredRoutes = useMemo(
+    () => filterRoutesByDateRange(routes, dateFrom || null, dateTo || null),
+    [dateFrom, dateTo, routes],
+  );
+
+  const groups = useMemo(() => groupRoutes(filteredRoutes, groupBy), [filteredRoutes, groupBy]);
+
+  useEffect(() => {
+    if (!selectedId) return;
+    const selected = routes.find((route) => route.properties.id === selectedId);
+    if (!selected) return;
+
+    const key = groupKeyForRoute(selected, groupBy);
+    setCollapsed((prev) => (prev[key] ? { ...prev, [key]: false } : prev));
+
+    window.requestAnimationFrame(() => {
+      const node = listRef.current?.querySelector(`[data-route-id="${selectedId}"]`);
+      node?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+  }, [groupBy, routes, selectedId]);
 
   const openFilePicker = (option: (typeof IMPORT_OPTIONS)[number]) => {
     pendingKindRef.current = option.kind;
@@ -100,11 +140,66 @@ export function RoutePanel() {
     }
   };
 
+  const toggleGroup = (key: string) => {
+    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const clearFilters = () => {
+    setDateFrom('');
+    setDateTo('');
+  };
+
+  const renderRouteItem = (route: RouteFeature) => (
+    <div key={route.properties.id} data-route-id={route.properties.id}>
+      <RouteItem
+        route={route}
+        isSelected={selectedId === route.properties.id}
+        isVisible={isVisible(route.properties.id)}
+        onSelect={() => selectRoute(route.properties.id)}
+        onToggleVisibility={() => toggleVisibility(route.properties.id)}
+        onDelete={() => {
+          if (window.confirm(`Delete "${route.properties.name}"?`)) {
+            void deleteRoute(route.properties.id);
+          }
+        }}
+        onRename={(name) =>
+          void updateRoute({
+            ...route,
+            properties: {
+              ...route.properties,
+              name,
+              updatedAt: new Date().toISOString(),
+            },
+          })
+        }
+        onNotesChange={(notes) =>
+          void updateRoute({
+            ...route,
+            properties: {
+              ...route.properties,
+              notes: notes || undefined,
+              updatedAt: new Date().toISOString(),
+            },
+          })
+        }
+        onEditGeometry={() => {
+          selectRoute(route.properties.id);
+          startEdit(route.properties.id, route.geometry.coordinates);
+        }}
+        onExport={() => exportRoute(route)}
+      />
+    </div>
+  );
+
   return (
     <aside className="route-panel">
       <div className="route-panel__header">
         <h2>Routes</h2>
-        <span className="route-panel__count">{routes.length}</span>
+        <span className="route-panel__count">
+          {filteredRoutes.length === routes.length
+            ? routes.length
+            : `${filteredRoutes.length}/${routes.length}`}
+        </span>
       </div>
 
       <StatsPanel />
@@ -162,55 +257,93 @@ export function RoutePanel() {
         />
       </div>
 
+      {routes.length > 0 && (
+        <div className="route-panel__filters">
+          <div className="route-panel__group-toggle" role="group" aria-label="Group routes">
+            {GROUP_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`btn btn--ghost btn--tiny ${groupBy === option.value ? 'btn--active' : ''}`}
+                onClick={() => setGroupBy(option.value)}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+          <div className="route-panel__date-filters">
+            <label>
+              <span>From</span>
+              <input
+                type="date"
+                value={dateFrom}
+                max={dateTo || undefined}
+                onChange={(event) => setDateFrom(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>To</span>
+              <input
+                type="date"
+                value={dateTo}
+                min={dateFrom || undefined}
+                onChange={(event) => setDateTo(event.target.value)}
+              />
+            </label>
+            {(dateFrom || dateTo) && (
+              <button type="button" className="btn btn--ghost btn--tiny" onClick={clearFilters}>
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {selectedId && !isLoading && (
+        <p className="route-panel__message">
+          Focus mode: other routes hidden. Click empty map to show all, or press Path to edit points.
+        </p>
+      )}
+
       {importMessage && <p className="route-panel__message">{importMessage}</p>}
 
-      <div className="route-panel__list">
+      <div className="route-panel__list" ref={listRef}>
         {isLoading && <p className="route-panel__empty">Loading routes…</p>}
         {!isLoading && routes.length === 0 && (
           <p className="route-panel__empty">
             No routes yet. Draw, record GPS, or import GPX / Apple Health ZIP.
           </p>
         )}
-        {routes.map((route) => (
-          <RouteItem
-            key={route.properties.id}
-            route={route}
-            isSelected={selectedId === route.properties.id}
-            isVisible={isVisible(route.properties.id)}
-            onSelect={() => selectRoute(route.properties.id)}
-            onToggleVisibility={() => toggleVisibility(route.properties.id)}
-            onDelete={() => {
-              if (window.confirm(`Delete "${route.properties.name}"?`)) {
-                void deleteRoute(route.properties.id);
-              }
-            }}
-            onRename={(name) =>
-              void updateRoute({
-                ...route,
-                properties: {
-                  ...route.properties,
-                  name,
-                  updatedAt: new Date().toISOString(),
-                },
-              })
-            }
-            onNotesChange={(notes) =>
-              void updateRoute({
-                ...route,
-                properties: {
-                  ...route.properties,
-                  notes: notes || undefined,
-                  updatedAt: new Date().toISOString(),
-                },
-              })
-            }
-            onEditGeometry={() => {
-              selectRoute(route.properties.id);
-              startEdit(route.properties.id, route.geometry.coordinates);
-            }}
-            onExport={() => exportRoute(route)}
-          />
-        ))}
+        {!isLoading && routes.length > 0 && filteredRoutes.length === 0 && (
+          <p className="route-panel__empty">No routes in this date range.</p>
+        )}
+
+        {groups.map((group) => {
+          const isFlat = groupBy === 'none';
+          const isOpen = isFlat || !collapsed[group.key];
+
+          if (isFlat) {
+            return <div key={group.key}>{group.routes.map(renderRouteItem)}</div>;
+          }
+
+          return (
+            <section key={group.key} className="route-group">
+              <button
+                type="button"
+                className="route-group__header"
+                aria-expanded={isOpen}
+                onClick={() => toggleGroup(group.key)}
+              >
+                <span className="route-group__chevron" aria-hidden>
+                  {isOpen ? '▾' : '▸'}
+                </span>
+                <span className="route-group__label">{group.label}</span>
+                <span className="route-group__count">{group.routes.length}</span>
+              </button>
+              {isOpen && <div className="route-group__body">{group.routes.map(renderRouteItem)}</div>}
+            </section>
+          );
+        })}
       </div>
     </aside>
   );

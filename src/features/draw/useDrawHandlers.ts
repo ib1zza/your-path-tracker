@@ -83,6 +83,7 @@ export function useDrawKeyboard(onFinish: () => void) {
   const points = useDrawStore((state) => state.points);
   const cancel = useDrawStore((state) => state.cancel);
   const undoLastPoint = useDrawStore((state) => state.undoLastPoint);
+  const removeSelectedPoint = useDrawStore((state) => state.removeSelectedPoint);
 
   useEffect(() => {
     if (mode === 'none') return;
@@ -98,12 +99,25 @@ export function useDrawKeyboard(onFinish: () => void) {
         return;
       }
 
-      const isUndo =
+      const isDelete =
         event.key === 'Backspace' ||
-        event.key === 'Delete' ||
-        ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z');
+        event.key === 'Delete';
 
-      if (isUndo && mode !== 'gps') {
+      if (isDelete && mode === 'edit') {
+        event.preventDefault();
+        removeSelectedPoint();
+        return;
+      }
+
+      const isUndo = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z';
+
+      if ((isUndo || isDelete) && mode !== 'gps' && mode !== 'edit') {
+        event.preventDefault();
+        undoLastPoint();
+        return;
+      }
+
+      if (isUndo && mode === 'edit') {
         event.preventDefault();
         undoLastPoint();
         return;
@@ -120,5 +134,5 @@ export function useDrawKeyboard(onFinish: () => void) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cancel, mode, onFinish, points.length, undoLastPoint]);
+  }, [cancel, mode, onFinish, points.length, removeSelectedPoint, undoLastPoint]);
 }

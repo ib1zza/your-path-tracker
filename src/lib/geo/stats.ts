@@ -1,4 +1,5 @@
 import { routesToHeatmapPoints } from './heatmap';
+import { routesGeometryKey } from './routeGeometry';
 import { formatDistance, type RouteFeature } from '../../types/route';
 
 export interface RouteStats {
@@ -11,7 +12,18 @@ export interface RouteStats {
   hottestShare: number;
 }
 
+let cachedKey = '';
+let cachedStats: RouteStats | null = null;
+
 export function computeRouteStats(routes: RouteFeature[]): RouteStats {
+  const key = `${routes.length}:${routesGeometryKey(routes)}:${routes.reduce(
+    (sum, route) => sum + (route.properties.distanceMeters || 0),
+    0,
+  )}`;
+  if (cachedStats && cachedKey === key) {
+    return cachedStats;
+  }
+
   const totalDistanceMeters = routes.reduce(
     (sum, route) => sum + (route.properties.distanceMeters || 0),
     0,
@@ -23,7 +35,7 @@ export function computeRouteStats(routes: RouteFeature[]): RouteStats {
   const maxVisits = visits.reduce((max, value) => Math.max(max, value), 0);
   const hottestShare = uniqueCells === 0 ? 0 : revisitedCells / uniqueCells;
 
-  return {
+  cachedStats = {
     routeCount: routes.length,
     totalDistanceMeters,
     totalDistanceLabel: formatDistance(totalDistanceMeters),
@@ -32,4 +44,6 @@ export function computeRouteStats(routes: RouteFeature[]): RouteStats {
     maxVisits,
     hottestShare,
   };
+  cachedKey = key;
+  return cachedStats;
 }

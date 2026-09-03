@@ -1,20 +1,25 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { GeoJSONSource, Map } from 'maplibre-gl';
 import type { MapRef } from 'react-map-gl/maplibre';
 import { fitMapToRoute } from '../../lib/geo/fitBounds';
 import { routesToHeatmapPoints } from '../../lib/geo/heatmap';
+import { routesGeometryKey } from '../../lib/geo/routeGeometry';
 import { useRouteStore } from '../../stores/routeStore';
 import type { RouteFeature } from '../../types/route';
 
 export const ROUTES_SOURCE_ID = 'saved-routes';
 export const ROUTES_OUTLINE_LAYER_ID = 'saved-routes-outline';
 export const ROUTES_LINE_LAYER_ID = 'saved-routes-line';
+export const ROUTES_HIT_LAYER_ID = 'saved-routes-hit';
 export const HEATMAP_SOURCE_ID = 'routes-heatmap';
 export const HEATMAP_LAYER_ID = 'routes-heatmap-layer';
 
 function moveRouteLayersToTop(map: Map) {
   if (map.getLayer(HEATMAP_LAYER_ID)) {
     map.moveLayer(HEATMAP_LAYER_ID);
+  }
+  if (map.getLayer(ROUTES_HIT_LAYER_ID)) {
+    map.moveLayer(ROUTES_HIT_LAYER_ID);
   }
   if (map.getLayer(ROUTES_OUTLINE_LAYER_ID)) {
     map.moveLayer(ROUTES_OUTLINE_LAYER_ID);
@@ -33,14 +38,16 @@ function moveDrawLayersToTop(map: Map) {
   }
 }
 
-function syncRoutesLayer(map: Map, routes: RouteFeature[], selectedId: string | null) {
+function syncRoutesGeometry(map: Map, routes: RouteFeature[]) {
   const data = {
     type: 'FeatureCollection' as const,
     features: routes.map((route) => ({
       type: 'Feature' as const,
+      id: route.properties.id,
       properties: {
-        ...route.properties,
-        isSelected: route.properties.id === selectedId ? 1 : 0,
+        id: route.properties.id,
+        color: route.properties.color,
+        name: route.properties.name,
       },
       geometry: route.geometry,
     })),
@@ -71,7 +78,7 @@ function syncRoutesLayer(map: Map, routes: RouteFeature[], selectedId: string | 
         'line-color': '#ffffff',
         'line-width': [
           'case',
-          ['==', ['get', 'isSelected'], 1],
+          ['boolean', ['feature-state', 'selected'], false],
           9,
           7,
         ],
@@ -93,7 +100,7 @@ function syncRoutesLayer(map: Map, routes: RouteFeature[], selectedId: string | 
         'line-color': ['get', 'color'],
         'line-width': [
           'case',
-          ['==', ['get', 'isSelected'], 1],
+          ['boolean', ['feature-state', 'selected'], false],
           6,
           4,
         ],
@@ -102,8 +109,50 @@ function syncRoutesLayer(map: Map, routes: RouteFeature[], selectedId: string | 
     });
   }
 
+  if (!map.getLayer(ROUTES_HIT_LAYER_ID)) {
+    map.addLayer({
+      id: ROUTES_HIT_LAYER_ID,
+      type: 'line',
+      source: ROUTES_SOURCE_ID,
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round',
+      },
+      paint: {
+        'line-color': '#000000',
+        'line-width': 22,
+        'line-opacity': 0,
+      },
+    });
+  }
+
   moveRouteLayersToTop(map);
   moveDrawLayersToTop(map);
+}
+
+function syncRouteSelection(map: Map, selectedId: string | null, previousSelectedId: string | null) {
+  if (!map.getSource(ROUTES_SOURCE_ID)) {
+    return;
+  }
+
+  if (previousSelectedId && previousSelectedId !== selectedId) {
+    try {
+      map.setFeatureState(
+        { source: ROUTES_SOURCE_ID, id: previousSelectedId },
+        { selected: false },
+      );
+    } catch {
+      // Feature may have been removed.
+    }
+  }
+
+  if (selectedId) {
+    try {
+      map.setFeatureState({ source: ROUTES_SOURCE_ID, id: selectedId }, { selected: true });
+    } catch {
+      // Feature may not exist yet.
+    }
+  }
 }
 
 export function useRoutesLayer(
@@ -113,22 +162,42 @@ export function useRoutesLayer(
   selectedId: string | null,
   heatmapEnabled = false,
 ) {
+  const geometryKeyRef = useRef('');
+  const selectedIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     const map = mapRef.current?.getMap();
     if (!map || !mapLoaded) {
       return;
     }
 
-    syncRoutesLayer(map, routes, selectedId);
+    const nextKey = routesGeometryKey(routes);
+    if (geometryKeyRef.current !== nextKey) {
+      syncRoutesGeometry(map, routes);
+      geometryKeyRef.current = nextKey;
+      // Re-apply selection after setData clears feature-state.
+      selectedIdRef.current = null;
+    }
+
+    if (selectedIdRef.current !== selectedId) {
+      syncRouteSelection(map, selectedId, selectedIdRef.current);
+      selectedIdRef.current = selectedId;
+    }
 
     if (map.getLayer(ROUTES_LINE_LAYER_ID)) {
       map.setPaintProperty(ROUTES_LINE_LAYER_ID, 'line-opacity', heatmapEnabled ? 0.22 : 1);
-      map.setPaintProperty(ROUTES_LINE_LAYER_ID, 'line-width', heatmapEnabled ? 2 : [
-        'case',
-        ['==', ['get', 'isSelected'], 1],
-        6,
-        4,
-      ]);
+      map.setPaintProperty(
+        ROUTES_LINE_LAYER_ID,
+        'line-width',
+        heatmapEnabled
+          ? 2
+          : [
+              'case',
+              ['boolean', ['feature-state', 'selected'], false],
+              6,
+              4,
+            ],
+      );
     }
     if (map.getLayer(ROUTES_OUTLINE_LAYER_ID)) {
       map.setPaintProperty(ROUTES_OUTLINE_LAYER_ID, 'line-opacity', heatmapEnabled ? 0 : 0.9);
@@ -142,21 +211,37 @@ export function useHeatmapLayer(
   routes: RouteFeature[],
   enabled: boolean,
 ) {
+  const geometryKeyRef = useRef('');
+
   useEffect(() => {
     const map = mapRef.current?.getMap();
     if (!map || !mapLoaded) {
       return;
     }
 
-    const data = enabled ? routesToHeatmapPoints(routes) : { type: 'FeatureCollection' as const, features: [] };
+    const nextKey = enabled ? routesGeometryKey(routes) : '';
+    const shouldUpdateData = enabled && geometryKeyRef.current !== nextKey;
+    const data = enabled
+      ? shouldUpdateData || !map.getSource(HEATMAP_SOURCE_ID)
+        ? routesToHeatmapPoints(routes)
+        : null
+      : { type: 'FeatureCollection' as const, features: [] };
+
+    if (shouldUpdateData) {
+      geometryKeyRef.current = nextKey;
+    }
+    if (!enabled) {
+      geometryKeyRef.current = '';
+    }
+
     const existingSource = map.getSource(HEATMAP_SOURCE_ID) as GeoJSONSource | undefined;
 
     if (!existingSource) {
       map.addSource(HEATMAP_SOURCE_ID, {
         type: 'geojson',
-        data,
+        data: data ?? { type: 'FeatureCollection', features: [] },
       });
-    } else {
+    } else if (data) {
       existingSource.setData(data);
     }
 
@@ -234,48 +319,6 @@ export function useHeatmapLayer(
         },
         map.getLayer(ROUTES_OUTLINE_LAYER_ID) ? ROUTES_OUTLINE_LAYER_ID : undefined,
       );
-    } else {
-      map.setPaintProperty(HEATMAP_LAYER_ID, 'heatmap-weight', [
-        'interpolate',
-        ['linear'],
-        ['get', 'visits'],
-        1,
-        0.12,
-        2,
-        0.4,
-        3,
-        0.7,
-        5,
-        1,
-      ]);
-      map.setPaintProperty(HEATMAP_LAYER_ID, 'heatmap-intensity', [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        8,
-        0.35,
-        12,
-        0.45,
-        16,
-        0.55,
-        19,
-        0.65,
-      ]);
-      map.setPaintProperty(HEATMAP_LAYER_ID, 'heatmap-radius', [
-        'interpolate',
-        ['linear'],
-        ['zoom'],
-        10,
-        10,
-        13,
-        18,
-        15,
-        28,
-        17,
-        46,
-        19,
-        72,
-      ]);
     }
 
     map.setLayoutProperty(HEATMAP_LAYER_ID, 'visibility', enabled ? 'visible' : 'none');
@@ -289,6 +332,8 @@ export function useDrawPreviewLayer(
   mapRef: React.RefObject<MapRef | null>,
   mapLoaded: boolean,
   points: [number, number][],
+  selectedPointIndex: number | null = null,
+  editMode = false,
 ) {
   useEffect(() => {
     const map = mapRef.current?.getMap();
@@ -320,7 +365,8 @@ export function useDrawPreviewLayer(
         ...lineFeatures,
         ...points.map((coordinate, index) => ({
           type: 'Feature' as const,
-          properties: { index },
+          id: index,
+          properties: { index, id: index },
           geometry: {
             type: 'Point' as const,
             coordinates: coordinate,
@@ -332,7 +378,11 @@ export function useDrawPreviewLayer(
     const existingSource = map.getSource(sourceId) as GeoJSONSource | undefined;
 
     if (!existingSource) {
-      map.addSource(sourceId, { type: 'geojson', data });
+      map.addSource(sourceId, {
+        type: 'geojson',
+        data,
+        promoteId: 'id',
+      });
     } else {
       existingSource.setData(data);
     }
@@ -342,6 +392,7 @@ export function useDrawPreviewLayer(
         id: lineLayerId,
         type: 'line',
         source: sourceId,
+        filter: ['==', ['geometry-type'], 'LineString'],
         layout: {
           'line-join': 'round',
           'line-cap': 'round',
@@ -361,17 +412,47 @@ export function useDrawPreviewLayer(
         source: sourceId,
         filter: ['==', ['geometry-type'], 'Point'],
         paint: {
-          'circle-radius': 6,
-          'circle-color': '#ff5722',
+          'circle-radius': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false],
+            9,
+            editMode ? 6 : 5,
+          ],
+          'circle-color': [
+            'case',
+            ['boolean', ['feature-state', 'selected'], false],
+            '#2563eb',
+            '#ff5722',
+          ],
           'circle-stroke-width': 2,
           'circle-stroke-color': '#ffffff',
           'circle-opacity': 1,
         },
       });
+    } else {
+      map.setPaintProperty(pointLayerId, 'circle-radius', [
+        'case',
+        ['boolean', ['feature-state', 'selected'], false],
+        9,
+        editMode ? 6 : 5,
+      ]);
+    }
+
+    if (editMode) {
+      for (let index = 0; index < points.length; index += 1) {
+        try {
+          map.setFeatureState(
+            { source: sourceId, id: index },
+            { selected: index === selectedPointIndex },
+          );
+        } catch {
+          // ignore
+        }
+      }
     }
 
     moveDrawLayersToTop(map);
-  }, [mapLoaded, mapRef, points]);
+  }, [editMode, mapLoaded, mapRef, points, selectedPointIndex]);
 }
 
 export function useFitRouteOnSelect(

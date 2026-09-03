@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Position } from 'geojson';
 import { clearGpsDraft, getGpsDraft, saveGpsDraft } from '../db/routesDb';
+import { removeSpikePoints } from '../lib/geo/editGeometry';
 import {
   permissionErrorMessage,
   queryGeoPermission,
@@ -16,6 +17,7 @@ interface DrawState {
   points: Position[];
   isFreehandActive: boolean;
   editingRouteId: string | null;
+  selectedPointIndex: number | null;
   gpsWatchId: number | null;
   gpsError: string | null;
   gpsPermission: GeoPermissionState;
@@ -32,6 +34,11 @@ interface DrawState {
   resumeGps: () => void;
   setGpsFollow: (follow: boolean) => void;
   addPoint: (point: Position) => void;
+  updatePoint: (index: number, point: Position) => void;
+  removePointAt: (index: number) => void;
+  selectPoint: (index: number | null) => void;
+  removeSelectedPoint: () => void;
+  cleanGpsSpikes: () => number;
   undoLastPoint: () => void;
   setPoints: (points: Position[]) => void;
   appendPoints: (points: Position[]) => void;
@@ -67,6 +74,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
   points: [],
   isFreehandActive: false,
   editingRouteId: null,
+  selectedPointIndex: null,
   gpsWatchId: null,
   gpsError: null,
   gpsPermission: 'unknown',
@@ -88,6 +96,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       points: [],
       isFreehandActive: false,
       editingRouteId: null,
+      selectedPointIndex: null,
       gpsWatchId: null,
       gpsError: null,
       gpsPaused: false,
@@ -106,6 +115,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       mode: 'edit',
       editingRouteId: routeId,
       points: [...points],
+      selectedPointIndex: null,
       isFreehandActive: false,
       gpsWatchId: null,
       gpsError: null,
@@ -149,6 +159,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       points: [],
       isFreehandActive: false,
       editingRouteId: null,
+      selectedPointIndex: null,
       gpsWatchId: null,
       gpsError: null,
       gpsPaused: false,
@@ -190,6 +201,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       mode: 'gps',
       points: draft.points,
       editingRouteId: null,
+      selectedPointIndex: null,
       isFreehandActive: false,
       gpsPaused: draft.paused,
       gpsStartedAt: draft.startedAt,
@@ -222,14 +234,62 @@ export const useDrawStore = create<DrawState>((set, get) => ({
   addPoint: (point) =>
     set((state) => ({
       points: [...state.points, point],
+      selectedPointIndex: null,
     })),
+
+  updatePoint: (index, point) =>
+    set((state) => {
+      if (index < 0 || index >= state.points.length) return state;
+      const points = [...state.points];
+      points[index] = point;
+      return { points };
+    }),
+
+  removePointAt: (index) =>
+    set((state) => {
+      if (index < 0 || index >= state.points.length) return state;
+      if (state.points.length <= 2) return state;
+      const points = state.points.filter((_, i) => i !== index);
+      let selectedPointIndex = state.selectedPointIndex;
+      if (selectedPointIndex == null) {
+        selectedPointIndex = null;
+      } else if (selectedPointIndex === index) {
+        selectedPointIndex = null;
+      } else if (selectedPointIndex > index) {
+        selectedPointIndex -= 1;
+      }
+      return { points, selectedPointIndex };
+    }),
+
+  selectPoint: (index) => set({ selectedPointIndex: index }),
+
+  removeSelectedPoint: () => {
+    const { selectedPointIndex, points } = get();
+    if (selectedPointIndex == null) {
+      if (points.length > 2) {
+        set({ points: points.slice(0, -1), selectedPointIndex: null });
+      }
+      return;
+    }
+    get().removePointAt(selectedPointIndex);
+  },
+
+  cleanGpsSpikes: () => {
+    const { points } = get();
+    const result = removeSpikePoints(points);
+    if (result.removed > 0) {
+      set({ points: result.points, selectedPointIndex: null });
+    }
+    return result.removed;
+  },
 
   undoLastPoint: () =>
     set((state) => ({
       points: state.points.slice(0, -1),
+      selectedPointIndex: null,
     })),
 
-  setPoints: (points) => set({ points }),
+  setPoints: (points) => set({ points, selectedPointIndex: null }),
 
   appendPoints: (points) =>
     set((state) => ({
@@ -279,6 +339,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
     set({
       points: [],
       isFreehandActive: false,
+      selectedPointIndex: null,
       gpsError: null,
     }),
 
@@ -294,6 +355,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       points: [],
       isFreehandActive: false,
       editingRouteId: null,
+      selectedPointIndex: null,
       gpsWatchId: null,
       gpsError: null,
       gpsPaused: false,
