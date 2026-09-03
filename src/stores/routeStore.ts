@@ -1,10 +1,6 @@
 import { create } from 'zustand';
-import {
-  deleteRoute as deleteRouteFromDb,
-  getAllRoutes,
-  saveRoute,
-  saveRoutes,
-} from '../db/routesDb';
+import { getAllRoutes } from '../db/routesDb';
+import { persistRoute, persistRoutes, removeRoute } from '../lib/firebase/syncRoutes';
 import { readRouteFiles, type ImportKind } from '../lib/geo/exportImport';
 import { resolveRoutePlaceName } from '../lib/geo/geocode';
 import { routeCentroid } from '../lib/geo/globe';
@@ -35,6 +31,7 @@ interface RouteState {
     overwrite: boolean,
     kind?: ImportKind,
   ) => Promise<{ imported: number; skipped: number }>;
+  applyRoutes: (routes: RouteFeature[]) => void;
 }
 
 const MAP_STYLE_KEY = 'path-tracker-map-style';
@@ -103,7 +100,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
     const changed = [...changedMap.values()];
     if (changed.length > 0) {
-      await saveRoutes(changed);
+      await persistRoutes(changed);
     }
 
     // Newest activity first.
@@ -120,7 +117,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
   addRoute: async (route) => {
     const thinned = thinRoutes([route]).routes[0] ?? route;
-    await saveRoute(thinned);
+    await persistRoute(thinned);
     set((state) => ({ routes: [thinned, ...state.routes] }));
     window.setTimeout(() => {
       void get().ensurePlaceNames();
@@ -128,7 +125,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   updateRoute: async (route) => {
-    await saveRoute(route);
+    await persistRoute(route);
     set((state) => ({
       routes: state.routes.map((item) =>
         item.properties.id === route.properties.id ? route : item,
@@ -137,7 +134,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   deleteRoute: async (id) => {
-    await deleteRouteFromDb(id);
+    await removeRoute(id);
     set((state) => {
       const hiddenIds = new Set(state.hiddenIds);
       hiddenIds.delete(id);
@@ -214,7 +211,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       }
 
       const updatedList = [...updates.values()];
-      await saveRoutes(updatedList);
+      await persistRoutes(updatedList);
       set((state) => ({
         routes: state.routes.map((item) => updates.get(item.properties.id) ?? item),
       }));
@@ -223,6 +220,13 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     });
 
     return placeNamesInFlight;
+  },
+
+  applyRoutes: (routes) => {
+    const sorted = [...routes].sort(
+      (a, b) => getRouteActivityDate(b).getTime() - getRouteActivityDate(a).getTime(),
+    );
+    set({ routes: sorted, isLoading: false });
   },
 
   importRoutes: async (files, overwrite, kind = 'auto') => {
@@ -245,7 +249,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
 
     if (toSave.length > 0) {
       const thinned = thinRoutes(toSave).routes;
-      await saveRoutes(thinned);
+      await persistRoutes(thinned);
       await get().loadRoutes();
     }
 

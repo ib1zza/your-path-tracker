@@ -137,6 +137,35 @@ a {
   background: transparent;
 }
 
+.auth-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.auth-status {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.auth-btn {
+  white-space: nowrap;
+}
+
+.auth-btn--google {
+  background: #ffffff;
+}
+
+.auth-error {
+  font-size: 0.75rem;
+  color: #b91c1c;
+}
+
 .btn--active {
   background: #dbeafe;
   border-color: #93c5fd;

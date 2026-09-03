@@ -1,4 +1,5 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
+import { AuthButton } from '../features/auth/AuthButton';
 import { DrawToolbar, GpsStatusBadge } from '../features/map/DrawToolbar';
 import { GpsResumePrompt } from '../features/map/GpsResumePrompt';
 import { RoutePanel } from '../features/routes/RoutePanel';
@@ -16,6 +17,7 @@ export function Layout() {
         {isMapPage && <DrawToolbar />}
         {isMapPage && <GpsStatusBadge />}
         <nav className="app-header__nav">
+          <AuthButton />
           <Link to="/" className={location.pathname === '/' ? 'nav-link nav-link--active' : 'nav-link'}>
             Map
           </Link>
