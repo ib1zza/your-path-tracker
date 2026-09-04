@@ -24,6 +24,34 @@ export function pointAfterVertex(points: Position[], index: number): Position | 
   return [current[0] + 0.0001, current[1]];
 }
 
+export function splitLineAtIndex(
+  points: Position[],
+  index: number,
+): { before: Position[]; after: Position[] } | null {
+  if (index < 1 || index > points.length - 2) {
+    return null;
+  }
+
+  return {
+    before: points.slice(0, index + 1),
+    after: points.slice(index),
+  };
+}
+
+export function mergeLineCoordinates(parts: Position[][]): Position[] {
+  const merged: Position[] = [];
+  for (const part of parts) {
+    for (const point of part) {
+      const last = merged[merged.length - 1];
+      if (last && last[0] === point[0] && last[1] === point[1]) {
+        continue;
+      }
+      merged.push(point);
+    }
+  }
+  return merged;
+}
+
 function haversineMeters(a: Position, b: Position): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const lat1 = toRad(a[1]);

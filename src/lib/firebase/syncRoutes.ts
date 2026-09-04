@@ -1,4 +1,5 @@
 import { getCurrentUser } from '../firebase/auth';
+import { isLikelyOfflineError, markCloudSyncPending } from './offlineQueue';
 import {
   deleteRoute as deleteLocalRoute,
   getAllRoutes,
@@ -108,24 +109,35 @@ function currentUid(): string | null {
   return getCurrentUser()?.uid ?? null;
 }
 
+async function writeCloudOrQueue(task: () => Promise<void>): Promise<void> {
+  try {
+    await task();
+  } catch (error) {
+    markCloudSyncPending();
+    if (!isLikelyOfflineError(error)) {
+      throw error;
+    }
+  }
+}
+
 export async function persistRoute(route: RouteFeature): Promise<void> {
   const uid = currentUid();
-  if (uid) {
-    await pushRouteToCloud(uid, route);
+  await saveRoute(route);
+  if (!uid) {
     return;
   }
 
-  await saveRoute(route);
+  await writeCloudOrQueue(() => saveCloudRoute(uid, route));
 }
 
 export async function persistRoutes(routes: RouteFeature[]): Promise<void> {
   const uid = currentUid();
-  if (uid) {
-    await pushRoutesToCloud(uid, routes);
+  await saveRoutes(routes);
+  if (!uid) {
     return;
   }
 
-  await saveRoutes(routes);
+  await writeCloudOrQueue(() => pushRoutesToCloud(uid, routes));
 }
 
 /**
@@ -135,20 +147,32 @@ export async function persistRoutes(routes: RouteFeature[]): Promise<void> {
  */
 export async function replacePersistedRoutes(routes: RouteFeature[]): Promise<void> {
   const uid = currentUid();
-  if (uid) {
-    await saveCloudRoutes(uid, routes);
-  }
   await replaceAllRoutes(routes);
+  if (!uid) {
+    return;
+  }
+
+  await writeCloudOrQueue(() => saveCloudRoutes(uid, routes));
 }
 
 export async function removeRoute(routeId: string): Promise<void> {
   const uid = currentUid();
-  if (uid) {
-    await removeRouteEverywhere(uid, routeId);
+  await deleteLocalRoute(routeId);
+  if (!uid) {
     return;
   }
 
-  await deleteLocalRoute(routeId);
+  await writeCloudOrQueue(() => deleteCloudRoute(uid, routeId));
+}
+
+export async function flushPendingCloudRoutes(): Promise<void> {
+  const uid = currentUid();
+  if (!uid) {
+    return;
+  }
+
+  const local = await getAllRoutes();
+  await saveCloudRoutes(uid, local);
 }
 
 export async function refreshLocalFromCloud(uid: string): Promise<RouteFeature[]> {

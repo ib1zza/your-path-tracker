@@ -1,4 +1,5 @@
 import { routesToHeatmapPoints } from './heatmap';
+import { getRouteActivityDate } from './routeDate';
 import { routesGeometryKey } from './routeGeometry';
 import { formatDistance, type RouteFeature } from '../../types/route';
 
@@ -46,4 +47,44 @@ export function computeRouteStats(routes: RouteFeature[]): RouteStats {
   };
   cachedKey = key;
   return cachedStats;
+}
+
+function monthKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function shiftMonth(date: Date, delta: number): Date {
+  return new Date(date.getFullYear(), date.getMonth() + delta, 1);
+}
+
+export function routesInCalendarMonth(routes: RouteFeature[], month: Date): RouteFeature[] {
+  const key = monthKey(month);
+  return routes.filter((route) => monthKey(getRouteActivityDate(route)) === key);
+}
+
+export function formatMonthLabel(date: Date): string {
+  return date.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+}
+
+export interface PeriodComparison {
+  currentLabel: string;
+  previousLabel: string;
+  current: RouteStats;
+  previous: RouteStats;
+  distanceDeltaMeters: number;
+  countDelta: number;
+}
+
+export function compareAdjacentMonths(routes: RouteFeature[], now = new Date()): PeriodComparison {
+  const previousMonth = shiftMonth(now, -1);
+  const current = computeRouteStats(routesInCalendarMonth(routes, now));
+  const previous = computeRouteStats(routesInCalendarMonth(routes, previousMonth));
+  return {
+    currentLabel: formatMonthLabel(now),
+    previousLabel: formatMonthLabel(previousMonth),
+    current,
+    previous,
+    distanceDeltaMeters: current.totalDistanceMeters - previous.totalDistanceMeters,
+    countDelta: current.routeCount - previous.routeCount,
+  };
 }

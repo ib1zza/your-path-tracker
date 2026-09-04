@@ -1,32 +1,36 @@
 import { create } from 'zustand';
+import type { MapStyleId } from '../lib/map/basemapStyles';
 
 interface MapUiState {
   fitAllNonce: number;
   showMyLocation: boolean;
-  locationFollow: boolean;
+  locateNonce: number;
+  mapStyleId: MapStyleId;
+  globeStyleId: MapStyleId;
   requestFitAllRoutes: () => void;
-  toggleMyLocation: () => void;
-  toggleLocationFollow: () => void;
+  locateMe: () => void;
+  setMapStyleId: (id: MapStyleId) => void;
+  setGlobeStyleId: (id: MapStyleId) => void;
 }
 
 export const useMapUiStore = create<MapUiState>((set) => ({
   fitAllNonce: 0,
   showMyLocation: false,
-  locationFollow: false,
+  locateNonce: 0,
+  mapStyleId: 'osm',
+  globeStyleId: 'hybrid',
 
   requestFitAllRoutes: () =>
     set((state) => ({
       fitAllNonce: state.fitAllNonce + 1,
     })),
 
-  toggleMyLocation: () =>
+  locateMe: () =>
     set((state) => ({
-      showMyLocation: !state.showMyLocation,
-      locationFollow: state.showMyLocation ? false : state.locationFollow,
+      showMyLocation: true,
+      locateNonce: state.locateNonce + 1,
     })),
 
-  toggleLocationFollow: () =>
-    set((state) => ({
-      locationFollow: !state.locationFollow,
-    })),
+  setMapStyleId: (id) => set({ mapStyleId: id }),
+  setGlobeStyleId: (id) => set({ globeStyleId: id }),
 }));

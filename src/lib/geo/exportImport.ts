@@ -46,6 +46,22 @@ function isLooseRouteFeature(value: unknown): value is Feature<LineString | Mult
   );
 }
 
+function normalizeImportedTags(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const tags = [
+    ...new Set(
+      value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean),
+    ),
+  ];
+  return tags.length > 0 ? tags : undefined;
+}
+
 function toLineStrings(geometry: LineString | MultiLineString): LineString[] {
   if (geometry.type === 'LineString') {
     return [geometry];
@@ -105,6 +121,7 @@ function normalizeImportedFeature(
           typeof feature.properties?.placeName === 'string'
             ? feature.properties.placeName
             : undefined,
+        tags: normalizeImportedTags(feature.properties?.tags),
         source: 'import' as const,
         distanceMeters: calculateDistanceMeters(geometry),
       },

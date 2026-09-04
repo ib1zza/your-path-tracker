@@ -1,10 +1,13 @@
 import { create } from 'zustand';
+import { v4 as uuidv4 } from 'uuid';
 import {
   persistRoute,
   replacePersistedRoutes,
   removeRoute,
   loadRoutesForCurrentUser,
 } from '../lib/firebase/syncRoutes';
+import { calculateDistanceMeters } from '../lib/geo/distance';
+import { mergeLineCoordinates, splitLineAtIndex } from '../lib/geo/editGeometry';
 import {
   readRouteFiles,
   type ImportKind,
@@ -50,6 +53,11 @@ interface RouteState {
   applyRoutes: (routes: RouteFeature[]) => void;
   removeDuplicateRoutes: () => Promise<{ removed: number }>;
   clearAllRoutes: () => Promise<void>;
+  duplicateRoute: (id: string) => Promise<void>;
+  deleteRoutes: (ids: string[]) => Promise<void>;
+  setVisibilityMany: (ids: string[], visible: boolean) => void;
+  mergeRoutes: (ids: string[]) => Promise<void>;
+  splitRoute: (id: string, vertexIndex: number) => Promise<void>;
 }
 
 const PLACE_NAME_GAP_MS = 1100;
@@ -384,5 +392,164 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       selectedId: null,
       hiddenIds: new Set(),
     });
+  },
+
+  duplicateRoute: async (id) => {
+    const route = get().routes.find((item) => item.properties.id === id);
+    if (!route) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const copy: RouteFeature = {
+      ...route,
+      properties: {
+        ...route.properties,
+        id: uuidv4(),
+        name: `${route.properties.name} (copy)`,
+        createdAt: now,
+        updatedAt: now,
+        source: route.properties.source ?? 'draw',
+      },
+    };
+    await get().addRoute(copy);
+    set({ selectedId: copy.properties.id });
+  },
+
+  deleteRoutes: async (ids) => {
+    const remove = new Set(ids);
+    if (remove.size === 0) {
+      return;
+    }
+
+    const next = get().routes.filter((route) => !remove.has(route.properties.id));
+    await replacePersistedRoutes(next);
+    set((state) => {
+      const hiddenIds = new Set(state.hiddenIds);
+      for (const id of remove) {
+        hiddenIds.delete(id);
+      }
+      return {
+        routes: next,
+        selectedId: state.selectedId && remove.has(state.selectedId) ? null : state.selectedId,
+        hiddenIds,
+      };
+    });
+  },
+
+  setVisibilityMany: (ids, visible) =>
+    set((state) => {
+      const hiddenIds = new Set(state.hiddenIds);
+      for (const id of ids) {
+        if (visible) {
+          hiddenIds.delete(id);
+        } else {
+          hiddenIds.add(id);
+        }
+      }
+      return { hiddenIds };
+    }),
+
+  mergeRoutes: async (ids) => {
+    const uniqueIds = [...new Set(ids)];
+    const selected = uniqueIds
+      .map((id) => get().routes.find((route) => route.properties.id === id))
+      .filter((route): route is RouteFeature => Boolean(route))
+      .sort((a, b) => getRouteActivityDate(a).getTime() - getRouteActivityDate(b).getTime());
+
+    if (selected.length < 2) {
+      return;
+    }
+
+    const coordinates = mergeLineCoordinates(selected.map((route) => route.geometry.coordinates));
+    if (coordinates.length < 2) {
+      return;
+    }
+
+    const geometry = { type: 'LineString' as const, coordinates };
+    const now = new Date().toISOString();
+    const merged: RouteFeature = {
+      type: 'Feature',
+      geometry,
+      properties: {
+        id: uuidv4(),
+        name: `${selected[0].properties.name} + ${selected.length - 1}`,
+        createdAt: selected[0].properties.createdAt,
+        updatedAt: now,
+        color: selected[0].properties.color,
+        notes:
+          selected
+            .map((route) => route.properties.notes)
+            .filter((value): value is string => Boolean(value))
+            .join('\n') || undefined,
+        placeName: selected[0].properties.placeName,
+        tags: (() => {
+          const tags = [...new Set(selected.flatMap((route) => route.properties.tags ?? []))];
+          return tags.length > 0 ? tags : undefined;
+        })(),
+        source: 'draw',
+        distanceMeters: calculateDistanceMeters(geometry),
+      },
+    };
+
+    const remove = new Set(uniqueIds);
+    const next = sortByActivity([
+      merged,
+      ...get().routes.filter((route) => !remove.has(route.properties.id)),
+    ]);
+    await replacePersistedRoutes(next);
+    set((state) => {
+      const hiddenIds = new Set(state.hiddenIds);
+      for (const id of remove) {
+        hiddenIds.delete(id);
+      }
+      return { routes: next, selectedId: merged.properties.id, hiddenIds };
+    });
+  },
+
+  splitRoute: async (id, vertexIndex) => {
+    const route = get().routes.find((item) => item.properties.id === id);
+    if (!route) {
+      return;
+    }
+
+    const parts = splitLineAtIndex(route.geometry.coordinates, vertexIndex);
+    if (!parts) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const beforeGeometry = { type: 'LineString' as const, coordinates: parts.before };
+    const afterGeometry = { type: 'LineString' as const, coordinates: parts.after };
+    const first: RouteFeature = {
+      ...route,
+      geometry: beforeGeometry,
+      properties: {
+        ...route.properties,
+        name: `${route.properties.name} · 1`,
+        updatedAt: now,
+        distanceMeters: calculateDistanceMeters(beforeGeometry),
+      },
+    };
+    const second: RouteFeature = {
+      ...route,
+      geometry: afterGeometry,
+      properties: {
+        ...route.properties,
+        id: uuidv4(),
+        name: `${route.properties.name} · 2`,
+        createdAt: now,
+        updatedAt: now,
+        distanceMeters: calculateDistanceMeters(afterGeometry),
+      },
+    };
+
+    const next = sortByActivity([
+      first,
+      second,
+      ...get().routes.filter((item) => item.properties.id !== id),
+    ]);
+    await replacePersistedRoutes(next);
+    set({ routes: next, selectedId: first.properties.id });
   },
 }));

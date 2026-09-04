@@ -149,6 +149,26 @@ function syncRouteSelection(
   }
 }
 
+export function queryRouteIdAtPoint(map: Map, point: { x: number; y: number }): string | null {
+  const pad = 10;
+  const layers = [ROUTES_HIT_LAYER_ID, ROUTES_LINE_LAYER_ID, ROUTES_OUTLINE_LAYER_ID].filter((id) =>
+    Boolean(map.getLayer(id)),
+  );
+  if (layers.length === 0) {
+    return null;
+  }
+
+  const hits = map.queryRenderedFeatures(
+    [
+      [point.x - pad, point.y - pad],
+      [point.x + pad, point.y + pad],
+    ],
+    { layers },
+  );
+  const hit = hits.find((feature) => feature.properties?.id);
+  return hit?.properties?.id != null ? String(hit.properties.id) : null;
+}
+
 export function useRoutesLayer(
   mapRef: React.RefObject<MapRef | null>,
   mapLoaded: boolean,
@@ -165,30 +185,38 @@ export function useRoutesLayer(
       return;
     }
 
-    const nextKey = routesGeometryKey(routes);
-    if (geometryKeyRef.current !== nextKey) {
-      syncRoutesGeometry(map, routes);
-      geometryKeyRef.current = nextKey;
-      // Re-apply selection after setData clears feature-state.
-      selectedIdRef.current = null;
-    }
+    const sync = () => {
+      const nextKey = routesGeometryKey(routes);
+      const sourceMissing = !map.getSource(ROUTES_SOURCE_ID);
+      if (sourceMissing || geometryKeyRef.current !== nextKey) {
+        syncRoutesGeometry(map, routes);
+        geometryKeyRef.current = nextKey;
+        selectedIdRef.current = null;
+      }
 
-    if (selectedIdRef.current !== selectedId) {
-      syncRouteSelection(map, selectedId, selectedIdRef.current);
-      selectedIdRef.current = selectedId;
-    }
+      if (selectedIdRef.current !== selectedId) {
+        syncRouteSelection(map, selectedId, selectedIdRef.current);
+        selectedIdRef.current = selectedId;
+      }
 
-    if (map.getLayer(ROUTES_LINE_LAYER_ID)) {
-      map.setPaintProperty(ROUTES_LINE_LAYER_ID, 'line-opacity', heatmapEnabled ? 0.22 : 1);
-      map.setPaintProperty(
-        ROUTES_LINE_LAYER_ID,
-        'line-width',
-        heatmapEnabled ? 2 : ['case', ['boolean', ['feature-state', 'selected'], false], 6, 4],
-      );
-    }
-    if (map.getLayer(ROUTES_OUTLINE_LAYER_ID)) {
-      map.setPaintProperty(ROUTES_OUTLINE_LAYER_ID, 'line-opacity', heatmapEnabled ? 0 : 0.9);
-    }
+      if (map.getLayer(ROUTES_LINE_LAYER_ID)) {
+        map.setPaintProperty(ROUTES_LINE_LAYER_ID, 'line-opacity', heatmapEnabled ? 0.22 : 1);
+        map.setPaintProperty(
+          ROUTES_LINE_LAYER_ID,
+          'line-width',
+          heatmapEnabled ? 2 : ['case', ['boolean', ['feature-state', 'selected'], false], 6, 4],
+        );
+      }
+      if (map.getLayer(ROUTES_OUTLINE_LAYER_ID)) {
+        map.setPaintProperty(ROUTES_OUTLINE_LAYER_ID, 'line-opacity', heatmapEnabled ? 0 : 0.9);
+      }
+    };
+
+    sync();
+    map.on('style.load', sync);
+    return () => {
+      map.off('style.load', sync);
+    };
   }, [heatmapEnabled, mapLoaded, mapRef, routes, selectedId]);
 }
 
@@ -206,6 +234,7 @@ export function useHeatmapLayer(
       return;
     }
 
+    const sync = () => {
     const nextKey = enabled ? routesGeometryKey(routes) : '';
     const shouldUpdateData = enabled && geometryKeyRef.current !== nextKey;
     const data = enabled
@@ -312,6 +341,13 @@ export function useHeatmapLayer(
     map.setPaintProperty(HEATMAP_LAYER_ID, 'heatmap-opacity', enabled ? 0.9 : 0);
     moveRouteLayersToTop(map);
     moveDrawLayersToTop(map);
+    };
+
+    sync();
+    map.on('style.load', sync);
+    return () => {
+      map.off('style.load', sync);
+    };
   }, [enabled, mapLoaded, mapRef, routes]);
 }
 

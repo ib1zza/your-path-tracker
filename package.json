@@ -11,7 +11,9 @@
     "lint:fix": "oxlint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "yarn lint && yarn format:check && yarn build",
+    "icons": "node scripts/generate-app-icons.mjs",
+    "test": "vitest run",
+    "check": "yarn lint && yarn format:check && yarn test && yarn build",
     "preview": "vite preview",
     "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true }); rmSync('node_modules/.tmp', { recursive: true, force: true });\""
   },
@@ -42,8 +44,10 @@
     "firebase-tools": "^15.29.0",
     "oxlint": "^1.79.0",
     "prettier": "^3.9.6",
+    "sharp": "^0.35.4",
     "typescript": "~6.0.2",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   },
   "packageManager": "yarn@4.18.0"
 }

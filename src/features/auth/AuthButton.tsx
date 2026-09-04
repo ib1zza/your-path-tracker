@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { ShortcutsList } from '../map/ShortcutsHelp';
 import { useAuthStore } from '../../stores/authStore';
 import { useDrawStore } from '../../stores/drawStore';
 import { useRouteStore } from '../../stores/routeStore';
@@ -25,6 +26,8 @@ export function AuthButton() {
   const lastSyncedAt = useAuthStore((state) => state.lastSyncedAt);
   const error = useAuthStore((state) => state.error);
   const isConfigured = useAuthStore((state) => state.isConfigured);
+  const hasPendingSync = useAuthStore((state) => state.hasPendingSync);
+  const flushPendingSync = useAuthStore((state) => state.flushPendingSync);
   const signIn = useAuthStore((state) => state.signIn);
   const signOut = useAuthStore((state) => state.signOut);
   const syncNow = useAuthStore((state) => state.syncNow);
@@ -61,6 +64,28 @@ export function AuthButton() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [settingsOpen, isBusy]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
+        return;
+      }
+
+      if (event.key === '?' || (event.key === '/' && event.shiftKey)) {
+        event.preventDefault();
+        setSettingsOpen((open) => !open);
+        setSettingsMessage(null);
+        setConfirmClearAll(false);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   if (isConfigured && !isReady) {
     return <span className="auth-status">Loading account…</span>;
@@ -155,7 +180,7 @@ export function AuthButton() {
         <span className="auth-status" title={user.email ?? undefined}>
           {label}
           {isSyncing ? ` · ${syncStatus ?? 'syncing…'}` : ''}
-          {!isSyncing && lastSyncedAt ? ` · synced ${formatLastSyncedAt(lastSyncedAt)}` : ''}
+          {!isSyncing && hasPendingSync ? ' · pending upload' : ''}
         </span>
       )}
       <button
@@ -200,6 +225,15 @@ export function AuthButton() {
             <div className="settings-modal__list">
               {user && (
                 <>
+                  <p className="settings-modal__meta">
+                    {isSyncing
+                      ? (syncStatus ?? 'Syncing…')
+                      : hasPendingSync
+                        ? 'Pending upload'
+                        : lastSyncedAt
+                          ? `Last synced ${formatLastSyncedAt(lastSyncedAt)}`
+                          : 'Not synced yet'}
+                  </p>
                   <button
                     type="button"
                     className="import-menu__item"
@@ -209,6 +243,17 @@ export function AuthButton() {
                     <span>{isSyncing ? 'Syncing…' : 'Sync now'}</span>
                     <small>Upload and download routes from cloud</small>
                   </button>
+                  {hasPendingSync && (
+                    <button
+                      type="button"
+                      className="import-menu__item"
+                      onClick={() => void flushPendingSync()}
+                      disabled={isBusy || isSyncing}
+                    >
+                      <span>Upload pending changes</span>
+                      <small>Send offline edits to the cloud</small>
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="import-menu__item"
@@ -274,6 +319,10 @@ export function AuthButton() {
                 </button>
               )}
             </div>
+            <section className="settings-modal__help">
+              <h3>Keyboard shortcuts</h3>
+              <ShortcutsList />
+            </section>
             {settingsMessage && <p className="settings-modal__message">{settingsMessage}</p>}
             <div className="modal__actions">
               <button

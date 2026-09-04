@@ -1,12 +1,14 @@
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { AuthButton } from '../features/auth/AuthButton';
 import { DrawToolbar, GpsStatusBadge } from '../features/map/DrawToolbar';
+import { GlobeToolbar } from '../features/map/GlobeToolbar';
 import { GpsResumePrompt } from '../features/map/GpsResumePrompt';
 import { RoutePanel } from '../features/routes/RoutePanel';
 
 export function Layout() {
   const location = useLocation();
   const isMapPage = location.pathname === '/';
+  const isGlobePage = location.pathname === '/globe';
 
   return (
     <div className="app-shell">
@@ -15,6 +17,7 @@ export function Layout() {
           <Link to="/">Path Tracker</Link>
         </div>
         {isMapPage && <DrawToolbar />}
+        {isGlobePage && <GlobeToolbar />}
         {isMapPage && <GpsStatusBadge />}
         <nav className="app-header__nav">
           <AuthButton />
@@ -34,7 +37,7 @@ export function Layout() {
       </header>
       {isMapPage && <GpsResumePrompt />}
       <div className="app-body">
-        {isMapPage && <RoutePanel />}
+        {(isMapPage || isGlobePage) && <RoutePanel />}
         <main className="app-main">
           <Outlet />
         </main>

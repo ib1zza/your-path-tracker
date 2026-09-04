@@ -88,6 +88,10 @@ export function RoutePanel() {
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [selectMode, setSelectMode] = useState(false);
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const requestFitAllRoutes = useMapUiStore((state) => state.requestFitAllRoutes);
 
@@ -100,6 +104,10 @@ export function RoutePanel() {
   const toggleVisibility = useRouteStore((state) => state.toggleVisibility);
   const isVisible = useRouteStore((state) => state.isVisible);
   const applyImportedRoutes = useRouteStore((state) => state.applyImportedRoutes);
+  const duplicateRoute = useRouteStore((state) => state.duplicateRoute);
+  const deleteRoutes = useRouteStore((state) => state.deleteRoutes);
+  const setVisibilityMany = useRouteStore((state) => state.setVisibilityMany);
+  const mergeRoutes = useRouteStore((state) => state.mergeRoutes);
   const startEdit = useDrawStore((state) => state.startEdit);
 
   useEffect(() => {
@@ -117,13 +125,38 @@ export function RoutePanel() {
     return routes.filter((route) => {
       const name = route.properties.name.toLowerCase();
       const place = route.properties.placeName?.toLowerCase() ?? '';
-      return name.includes(debouncedSearch) || place.includes(debouncedSearch);
+      const tags = (route.properties.tags ?? []).join(' ').toLowerCase();
+      return (
+        name.includes(debouncedSearch) ||
+        place.includes(debouncedSearch) ||
+        tags.includes(debouncedSearch)
+      );
     });
   }, [debouncedSearch, routes]);
 
+  const taggedRoutes = useMemo(() => {
+    if (selectedTags.length === 0) {
+      return searchedRoutes;
+    }
+
+    return searchedRoutes.filter((route) =>
+      selectedTags.every((tag) => route.properties.tags?.includes(tag)),
+    );
+  }, [searchedRoutes, selectedTags]);
+
+  const availableTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const route of routes) {
+      for (const tag of route.properties.tags ?? []) {
+        tags.add(tag);
+      }
+    }
+    return [...tags].sort();
+  }, [routes]);
+
   const filteredRoutes = useMemo(
-    () => filterRoutesByDateRange(searchedRoutes, dateFrom || null, dateTo || null),
-    [dateFrom, dateTo, searchedRoutes],
+    () => filterRoutesByDateRange(taggedRoutes, dateFrom || null, dateTo || null),
+    [dateFrom, dateTo, taggedRoutes],
   );
 
   const groups = useMemo(() => groupRoutes(filteredRoutes, groupBy), [filteredRoutes, groupBy]);
@@ -180,6 +213,29 @@ export function RoutePanel() {
   const clearFilters = () => {
     setDateFrom('');
     setDateTo('');
+    setSelectedTags([]);
+    setSearchQuery('');
+  };
+
+  const toggleChecked = (id: string) => {
+    setCheckedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  };
+
+  const handleBulkDelete = () => {
+    if (checkedIds.length === 0) {
+      return;
+    }
+    if (
+      !window.confirm(
+        `Delete ${checkedIds.length} selected route${checkedIds.length === 1 ? '' : 's'}?`,
+      )
+    ) {
+      return;
+    }
+    void deleteRoutes(checkedIds);
+    setCheckedIds([]);
   };
 
   const visibleRouteCount = routes.filter((route) => isVisible(route.properties.id)).length;
@@ -190,6 +246,9 @@ export function RoutePanel() {
         route={route}
         isSelected={selectedId === route.properties.id}
         isVisible={isVisible(route.properties.id)}
+        selectMode={selectMode}
+        isChecked={checkedIds.includes(route.properties.id)}
+        onToggleChecked={() => toggleChecked(route.properties.id)}
         onSelect={() => selectRoute(route.properties.id)}
         onToggleVisibility={() => toggleVisibility(route.properties.id)}
         onDelete={() => {
@@ -197,6 +256,7 @@ export function RoutePanel() {
             void deleteRoute(route.properties.id);
           }
         }}
+        onDuplicate={() => void duplicateRoute(route.properties.id)}
         onRename={(name) =>
           void updateRoute({
             ...route,
@@ -227,6 +287,16 @@ export function RoutePanel() {
             },
           })
         }
+        onTagsChange={(tags) =>
+          void updateRoute({
+            ...route,
+            properties: {
+              ...route.properties,
+              tags: tags.length > 0 ? tags : undefined,
+              updatedAt: new Date().toISOString(),
+            },
+          })
+        }
         onEditGeometry={() => {
           selectRoute(route.properties.id);
           startEdit(route.properties.id, route.geometry.coordinates);
@@ -237,7 +307,21 @@ export function RoutePanel() {
   );
 
   return (
-    <aside className="route-panel">
+    <aside className={`route-panel ${sheetOpen ? 'route-panel--open' : ''}`}>
+      <button
+        type="button"
+        className="route-panel__sheet-toggle"
+        aria-expanded={sheetOpen}
+        onClick={() => setSheetOpen((open) => !open)}
+      >
+        <span className="route-panel__sheet-handle" aria-hidden />
+        <strong>Routes</strong>
+        <span className="route-panel__count">
+          {filteredRoutes.length === routes.length
+            ? routes.length
+            : `${filteredRoutes.length}/${routes.length}`}
+        </span>
+      </button>
       <div className="route-panel__header">
         <h2>Routes</h2>
         <span className="route-panel__count">
@@ -247,7 +331,11 @@ export function RoutePanel() {
         </span>
       </div>
 
-      <StatsPanel />
+      <StatsPanel
+        routes={filteredRoutes}
+        allRoutes={routes}
+        filtered={filteredRoutes.length !== routes.length}
+      />
 
       <div className="route-panel__toolbar">
         <div className="import-menu">
@@ -301,6 +389,17 @@ export function RoutePanel() {
         >
           Export all
         </button>
+        <button
+          type="button"
+          className={`btn btn--ghost ${selectMode ? 'btn--active' : ''}`}
+          disabled={filteredRoutes.length === 0}
+          onClick={() => {
+            setSelectMode((open) => !open);
+            setCheckedIds([]);
+          }}
+        >
+          Select
+        </button>
         <input
           ref={fileInputRef}
           type="file"
@@ -315,7 +414,7 @@ export function RoutePanel() {
           <input
             type="search"
             className="route-panel__search-input"
-            placeholder="Search by name or place…"
+            placeholder="Search name, place, or tag…"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
           />
@@ -364,12 +463,86 @@ export function RoutePanel() {
                 onChange={(event) => setDateTo(event.target.value)}
               />
             </label>
-            {(dateFrom || dateTo) && (
+            {(dateFrom || dateTo || selectedTags.length > 0 || searchQuery) && (
               <button type="button" className="btn btn--ghost btn--tiny" onClick={clearFilters}>
                 Clear
               </button>
             )}
           </div>
+          {availableTags.length > 0 && (
+            <div className="route-panel__tags" role="group" aria-label="Filter by tag">
+              {availableTags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  className={`tag-chip ${selectedTags.includes(tag) ? 'tag-chip--active' : ''}`}
+                  onClick={() =>
+                    setSelectedTags((current) =>
+                      current.includes(tag)
+                        ? current.filter((item) => item !== tag)
+                        : [...current, tag],
+                    )
+                  }
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectMode && (
+        <div className="route-panel__bulk">
+          <span>{checkedIds.length} selected</span>
+          <button
+            type="button"
+            className="btn btn--ghost btn--tiny"
+            disabled={checkedIds.length === 0}
+            onClick={() => setVisibilityMany(checkedIds, false)}
+          >
+            Hide
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--tiny"
+            disabled={checkedIds.length === 0}
+            onClick={() => setVisibilityMany(checkedIds, true)}
+          >
+            Show
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--tiny"
+            disabled={checkedIds.length === 0}
+            onClick={() =>
+              exportAllRoutes(
+                filteredRoutes.filter((route) => checkedIds.includes(route.properties.id)),
+              )
+            }
+          >
+            Export
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--tiny"
+            disabled={checkedIds.length < 2}
+            onClick={() => {
+              void mergeRoutes(checkedIds);
+              setCheckedIds([]);
+              setSelectMode(false);
+            }}
+          >
+            Merge
+          </button>
+          <button
+            type="button"
+            className="btn btn--ghost btn--tiny btn--danger"
+            disabled={checkedIds.length === 0}
+            onClick={handleBulkDelete}
+          >
+            Delete
+          </button>
         </div>
       )}
 

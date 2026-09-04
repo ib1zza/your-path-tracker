@@ -1,4 +1,4 @@
-.PHONY: help install dev build preview lint lint-fix format format-check typecheck check clean
+.PHONY: help install dev build preview lint lint-fix format format-check typecheck test check clean
 
 YARN ?= yarn
 
@@ -13,7 +13,8 @@ help:
 	@echo "  format        Format with Prettier"
 	@echo "  format-check  Check Prettier formatting"
 	@echo "  typecheck     TypeScript project build (no bundle)"
-	@echo "  check         lint + format-check + build"
+	@echo "  test          Run unit tests"
+	@echo "  check         lint + format-check + test + build"
 	@echo "  clean         Remove dist and Vite/TS caches"
 
 install:
@@ -42,6 +43,9 @@ format-check:
 
 typecheck:
 	$(YARN) typecheck
+
+test:
+	$(YARN) test
 
 check:
 	$(YARN) check

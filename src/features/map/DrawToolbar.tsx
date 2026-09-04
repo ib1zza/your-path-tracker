@@ -5,6 +5,25 @@ import { queryGeoPermission } from '../../lib/geo/geolocation';
 import { useDrawStore } from '../../stores/drawStore';
 import { useMapUiStore } from '../../stores/mapUiStore';
 import { useRouteStore } from '../../stores/routeStore';
+import { MapStyleMenu } from './MapStyleMenu';
+
+const NEW_ROUTE_OPTIONS = [
+  {
+    mode: 'click' as const,
+    label: 'Click',
+    hint: 'Tap the map to add points',
+  },
+  {
+    mode: 'freehand' as const,
+    label: 'Freehand',
+    hint: 'Draw a path by dragging',
+  },
+  {
+    mode: 'gps' as const,
+    label: 'GPS',
+    hint: 'Record while you walk',
+  },
+];
 
 export function DrawToolbar() {
   const mode = useDrawStore((state) => state.mode);
@@ -14,10 +33,14 @@ export function DrawToolbar() {
   const heatmapEnabled = useRouteStore((state) => state.heatmapEnabled);
   const toggleHeatmap = useRouteStore((state) => state.toggleHeatmap);
   const showMyLocation = useMapUiStore((state) => state.showMyLocation);
-  const locationFollow = useMapUiStore((state) => state.locationFollow);
-  const toggleMyLocation = useMapUiStore((state) => state.toggleMyLocation);
-  const toggleLocationFollow = useMapUiStore((state) => state.toggleLocationFollow);
+  const locateMe = useMapUiStore((state) => state.locateMe);
+  const mapStyleId = useMapUiStore((state) => state.mapStyleId);
+  const setMapStyleId = useMapUiStore((state) => state.setMapStyleId);
   const [startingGps, setStartingGps] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const isDrawing = mode === 'click' || mode === 'freehand' || mode === 'gps';
+  const activeLabel = NEW_ROUTE_OPTIONS.find((option) => option.mode === mode)?.label;
 
   useEffect(() => {
     void queryGeoPermission().then((state) => {
@@ -26,6 +49,8 @@ export function DrawToolbar() {
   }, []);
 
   const handleModeChange = async (nextMode: 'click' | 'freehand' | 'gps') => {
+    setMenuOpen(false);
+
     if (mode === nextMode) {
       cancel();
       return;
@@ -44,28 +69,44 @@ export function DrawToolbar() {
 
   return (
     <div className="draw-toolbar">
-      <button
-        type="button"
-        className={`btn ${mode === 'click' ? 'btn--active' : ''}`}
-        onClick={() => void handleModeChange('click')}
-      >
-        Click
-      </button>
-      <button
-        type="button"
-        className={`btn ${mode === 'freehand' ? 'btn--active' : ''}`}
-        onClick={() => void handleModeChange('freehand')}
-      >
-        Freehand
-      </button>
-      <button
-        type="button"
-        className={`btn ${mode === 'gps' ? 'btn--active' : ''}`}
-        disabled={startingGps}
-        onClick={() => void handleModeChange('gps')}
-      >
-        {startingGps ? 'GPS…' : 'GPS'}
-      </button>
+      <div className="draw-menu">
+        <button
+          type="button"
+          className={`btn ${isDrawing ? 'btn--active' : ''}`}
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          disabled={startingGps}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          {startingGps ? 'GPS…' : activeLabel ?? 'New route'}
+        </button>
+        {menuOpen && (
+          <>
+            <button
+              type="button"
+              className="draw-menu__backdrop"
+              aria-label="Close new route menu"
+              onClick={() => setMenuOpen(false)}
+            />
+            <div className="draw-menu__list" role="menu">
+              {NEW_ROUTE_OPTIONS.map((option) => (
+                <button
+                  key={option.mode}
+                  type="button"
+                  className={`draw-menu__item ${mode === option.mode ? 'draw-menu__item--active' : ''}`}
+                  role="menuitem"
+                  onClick={() => void handleModeChange(option.mode)}
+                >
+                  <span>{option.label}</span>
+                  <small>{option.hint}</small>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      <span className="draw-toolbar__divider" aria-hidden />
+      <MapStyleMenu value={mapStyleId} onChange={setMapStyleId} />
       <span className="draw-toolbar__divider" aria-hidden />
       <button
         type="button"
@@ -78,19 +119,10 @@ export function DrawToolbar() {
       <button
         type="button"
         className={`btn ${showMyLocation ? 'btn--active' : ''}`}
-        onClick={toggleMyLocation}
+        onClick={locateMe}
       >
         My location
       </button>
-      {showMyLocation && (
-        <button
-          type="button"
-          className={`btn ${locationFollow ? 'btn--active' : ''}`}
-          onClick={toggleLocationFollow}
-        >
-          Follow
-        </button>
-      )}
     </div>
   );
 }

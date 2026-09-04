@@ -15,7 +15,8 @@ import { pickRouteColor } from '../../types/route';
 import { useDrawKeyboard, useFreehandDraw } from '../draw/useDrawHandlers';
 import { useGpsDraw } from '../draw/useGpsDraw';
 import { useVertexEdit } from '../draw/useVertexEdit';
-import { DEFAULT_MAP_VIEW, OSM_MAP_STYLE } from './mapConfig';
+import { getBasemapStyle } from '../../lib/map/basemapStyles';
+import { DEFAULT_MAP_VIEW } from './mapConfig';
 import { MapControls } from './MapControls';
 import { PlaceSearch } from './PlaceSearch';
 import {
@@ -50,6 +51,7 @@ export function MapView() {
   const heatmapEnabled = useRouteStore((state) => state.heatmapEnabled);
   const addRoute = useRouteStore((state) => state.addRoute);
   const updateRoute = useRouteStore((state) => state.updateRoute);
+  const splitRoute = useRouteStore((state) => state.splitRoute);
   const selectRoute = useRouteStore((state) => state.selectRoute);
 
   const mode = useDrawStore((state) => state.mode);
@@ -64,6 +66,8 @@ export function MapView() {
   const clearGpsSession = useDrawStore((state) => state.clearGpsSession);
 
   const fitAllNonce = useMapUiStore((state) => state.fitAllNonce);
+  const mapStyleId = useMapUiStore((state) => state.mapStyleId);
+  const mapStyle = useMemo(() => getBasemapStyle(mapStyleId), [mapStyleId]);
 
   const geometryKey = useMemo(() => routesGeometryKey(routes), [routes]);
 
@@ -294,7 +298,7 @@ export function MapView() {
       <Map
         ref={mapRef}
         initialViewState={DEFAULT_MAP_VIEW}
-        mapStyle={OSM_MAP_STYLE}
+        mapStyle={mapStyle}
         style={{ width: '100%', height: '100%' }}
         dragPan={mode !== 'freehand'}
         onLoad={() => setMapLoaded(true)}
@@ -337,7 +341,18 @@ export function MapView() {
         />
       </div>
 
-      <MapControls onFinish={openSaveDialog} />
+      <MapControls
+        onFinish={openSaveDialog}
+        onSplit={() => {
+          const state = useDrawStore.getState();
+          if (!state.editingRouteId || state.selectedPointIndex == null) {
+            return;
+          }
+          void splitRoute(state.editingRouteId, state.selectedPointIndex).then(() => {
+            cancelDraw();
+          });
+        }}
+      />
 
       {heatmapEnabled && (
         <div className="heatmap-legend">

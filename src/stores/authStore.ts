@@ -6,7 +6,12 @@ import {
   signOutUser,
   subscribeToAuth,
 } from '../lib/firebase/auth';
-import { syncRoutesForUser } from '../lib/firebase/syncRoutes';
+import {
+  clearCloudSyncPending,
+  isCloudSyncPending,
+  subscribeCloudSyncPending,
+} from '../lib/firebase/offlineQueue';
+import { flushPendingCloudRoutes, syncRoutesForUser } from '../lib/firebase/syncRoutes';
 import { useRouteStore } from './routeStore';
 
 interface AuthState {
@@ -17,10 +22,12 @@ interface AuthState {
   lastSyncedAt: string | null;
   error: string | null;
   isConfigured: boolean;
+  hasPendingSync: boolean;
   init: () => () => void;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
   syncNow: () => Promise<void>;
+  flushPendingSync: () => Promise<void>;
 }
 
 async function runCloudSync(uid: string, onProgress: (message: string) => void): Promise<void> {
@@ -36,24 +43,61 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   lastSyncedAt: null,
   error: null,
   isConfigured: isFirebaseConfigured,
+  hasPendingSync: isCloudSyncPending(),
 
-  init: () => {
-    if (!isFirebaseConfigured) {
-      void useRouteStore.getState().loadRoutes();
-      return () => {};
+  flushPendingSync: async () => {
+    if (!get().user || get().isSyncing || !isCloudSyncPending()) {
+      return;
     }
 
-    return subscribeToAuth((user) => {
+    set({ isSyncing: true, syncStatus: 'Uploading offline changes…', error: null });
+    try {
+      await flushPendingCloudRoutes();
+      clearCloudSyncPending();
+      set({ lastSyncedAt: new Date().toISOString(), hasPendingSync: false });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to upload offline changes.';
+      set({ error: message });
+    } finally {
+      set({ isSyncing: false, syncStatus: null });
+    }
+  },
+
+  init: () => {
+    const unsubscribePending = subscribeCloudSyncPending((hasPendingSync) => {
+      set({ hasPendingSync });
+    });
+
+    const onOnline = () => {
+      void get().flushPendingSync();
+    };
+    window.addEventListener('online', onOnline);
+
+    if (!isFirebaseConfigured) {
+      void useRouteStore.getState().loadRoutes();
+      return () => {
+        unsubscribePending();
+        window.removeEventListener('online', onOnline);
+      };
+    }
+
+    const unsubscribeAuth = subscribeToAuth((user) => {
       set({ user, isReady: true, error: null });
 
       if (user) {
         set({ isSyncing: true, syncStatus: 'Starting sync…' });
-        void runCloudSync(user.uid, (syncStatus) => {
-          set({ syncStatus });
-        })
-          .then(() => {
-            set({ lastSyncedAt: new Date().toISOString() });
-          })
+        void (async () => {
+          if (isCloudSyncPending()) {
+            set({ syncStatus: 'Uploading offline changes…' });
+            await flushPendingCloudRoutes();
+            clearCloudSyncPending();
+            set({ hasPendingSync: false });
+          }
+          await runCloudSync(user.uid, (syncStatus) => {
+            set({ syncStatus });
+          });
+          set({ lastSyncedAt: new Date().toISOString() });
+        })()
           .catch((error: unknown) => {
             const message =
               error instanceof Error ? error.message : 'Failed to sync routes with cloud.';
@@ -68,6 +112,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ syncStatus: null, isSyncing: false, lastSyncedAt: null });
       void useRouteStore.getState().loadRoutes();
     });
+
+    return () => {
+      unsubscribePending();
+      unsubscribeAuth();
+      window.removeEventListener('online', onOnline);
+    };
   },
 
   signIn: async () => {

@@ -6,6 +6,12 @@ import { useMapUiStore } from '../../stores/mapUiStore';
 export const MY_LOCATION_SOURCE_ID = 'my-location';
 export const MY_LOCATION_LAYER_ID = 'my-location-dot';
 
+const GEO_OPTIONS: PositionOptions = {
+  enableHighAccuracy: true,
+  maximumAge: 5000,
+  timeout: 20000,
+};
+
 function ensureMyLocationLayer(map: Map) {
   if (!map.getSource(MY_LOCATION_SOURCE_ID)) {
     map.addSource(MY_LOCATION_SOURCE_ID, {
@@ -32,6 +38,31 @@ function ensureMyLocationLayer(map: Map) {
   }
 }
 
+function setMyLocationPoint(map: Map, longitude: number, latitude: number) {
+  const source = map.getSource(MY_LOCATION_SOURCE_ID) as GeoJSONSource | undefined;
+  source?.setData({
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'Point',
+          coordinates: [longitude, latitude],
+        },
+      },
+    ],
+  });
+}
+
+function flyToMyLocation(map: Map, longitude: number, latitude: number) {
+  map.easeTo({
+    center: [longitude, latitude],
+    zoom: Math.max(map.getZoom(), 14),
+    duration: 700,
+  });
+}
+
 function clearMyLocationLayer(map: Map) {
   const source = map.getSource(MY_LOCATION_SOURCE_ID) as GeoJSONSource | undefined;
   source?.setData({
@@ -42,7 +73,7 @@ function clearMyLocationLayer(map: Map) {
 
 export function useMyLocationLayer(mapRef: React.RefObject<MapRef | null>, mapLoaded: boolean) {
   const showMyLocation = useMapUiStore((state) => state.showMyLocation);
-  const locationFollow = useMapUiStore((state) => state.locationFollow);
+  const locateNonce = useMapUiStore((state) => state.locateNonce);
   const watchIdRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -72,44 +103,50 @@ export function useMyLocationLayer(mapRef: React.RefObject<MapRef | null>, mapLo
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       (position) => {
-        const { longitude, latitude } = position.coords;
-        const source = map.getSource(MY_LOCATION_SOURCE_ID) as GeoJSONSource | undefined;
-        source?.setData({
-          type: 'FeatureCollection',
-          features: [
-            {
-              type: 'Feature',
-              properties: {},
-              geometry: {
-                type: 'Point',
-                coordinates: [longitude, latitude],
-              },
-            },
-          ],
-        });
-
-        if (useMapUiStore.getState().locationFollow) {
-          map.easeTo({
-            center: [longitude, latitude],
-            duration: 500,
-          });
-        }
+        setMyLocationPoint(map, position.coords.longitude, position.coords.latitude);
       },
       () => {
-        // Ignore transient errors; user can toggle off and on.
+        // Ignore transient errors; user can tap My location again.
       },
-      {
-        enableHighAccuracy: true,
-        maximumAge: 5000,
-        timeout: 20000,
-      },
+      GEO_OPTIONS,
     );
 
+    const onStyleLoad = () => {
+      ensureMyLocationLayer(map);
+    };
+    map.on('style.load', onStyleLoad);
+
     return () => {
+      map.off('style.load', onStyleLoad);
       if (watchIdRef.current !== null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
     };
-  }, [locationFollow, mapLoaded, mapRef, showMyLocation]);
+  }, [mapLoaded, mapRef, showMyLocation]);
+
+  useEffect(() => {
+    if (!mapLoaded || locateNonce === 0 || !('geolocation' in navigator)) {
+      return;
+    }
+
+    const map = mapRef.current?.getMap();
+    if (!map) {
+      return;
+    }
+
+    ensureMyLocationLayer(map);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { longitude, latitude } = position.coords;
+        setMyLocationPoint(map, longitude, latitude);
+        flyToMyLocation(map, longitude, latitude);
+      },
+      () => {
+        // Permission denied or timeout — marker watch may still succeed later.
+      },
+      GEO_OPTIONS,
+    );
+  }, [locateNonce, mapLoaded, mapRef]);
 }

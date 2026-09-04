@@ -1,71 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import MapGL, { Marker, NavigationControl, type MapRef } from 'react-map-gl/maplibre';
-import type { Map as MaplibreMap, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { fitMapToRoute } from '../lib/geo/fitBounds';
+import { PlaceSearch } from '../features/map/PlaceSearch';
+import { applyBasemapAtmosphere, getBasemapStyle } from '../lib/map/basemapStyles';
+import { fitMapToRoute, fitMapToRoutes } from '../lib/geo/fitBounds';
 import { routeCentroid } from '../lib/geo/globe';
-import { useFitRouteOnSelect, useRoutesLayer } from '../features/map/useMapLayers';
+import { routesGeometryKey } from '../lib/geo/routeGeometry';
+import {
+  queryRouteIdAtPoint,
+  ROUTES_HIT_LAYER_ID,
+  ROUTES_LINE_LAYER_ID,
+  ROUTES_OUTLINE_LAYER_ID,
+  useFitRouteOnSelect,
+  useHeatmapLayer,
+  useRoutesLayer,
+} from '../features/map/useMapLayers';
+import { useMyLocationLayer } from '../features/map/useMyLocation';
+import { useMapUiStore } from '../stores/mapUiStore';
 import { useRouteStore } from '../stores/routeStore';
 import type { RouteFeature } from '../types/route';
-
-const GLOBE_STYLE: StyleSpecification = {
-  version: 8,
-  projection: {
-    type: 'globe',
-  },
-  sources: {
-    satellite: {
-      type: 'raster',
-      tiles: [
-        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      ],
-      tileSize: 256,
-      maxzoom: 19,
-      attribution:
-        'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-    },
-    labels: {
-      type: 'raster',
-      tiles: ['https://basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      maxzoom: 20,
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-    },
-  },
-  layers: [
-    {
-      id: 'satellite',
-      type: 'raster',
-      source: 'satellite',
-    },
-    {
-      id: 'labels',
-      type: 'raster',
-      source: 'labels',
-      minzoom: 5,
-      paint: {
-        'raster-opacity': 0.9,
-      },
-    },
-  ],
-  sky: {
-    'sky-color': '#0b1026',
-    'horizon-color': '#5b87c5',
-    'fog-color': '#d7e6f5',
-  },
-};
-
-function groupRoutesByPlace(routes: RouteFeature[]) {
-  const groups = new globalThis.Map<string, RouteFeature[]>();
-  for (const route of routes) {
-    const key = route.properties.placeName || 'Unknown place';
-    const list = groups.get(key) ?? [];
-    list.push(route);
-    groups.set(key, list);
-  }
-  return [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-}
 
 function placePins(routes: RouteFeature[]) {
   const byPlace = new globalThis.Map<
@@ -95,19 +48,6 @@ function placePins(routes: RouteFeature[]) {
   return [...byPlace.entries()];
 }
 
-function applyGlobeAtmosphere(map: MaplibreMap) {
-  const maybeFog = map as MaplibreMap & {
-    setFog?: (fog: Record<string, string | number>) => void;
-  };
-  maybeFog.setFog?.({
-    color: 'rgb(186, 210, 235)',
-    'high-color': 'rgb(36, 92, 223)',
-    'horizon-blend': 0.03,
-    'space-color': 'rgb(11, 11, 25)',
-    'star-intensity': 0.65,
-  });
-}
-
 export function GlobePage() {
   const mapRef = useRef<MapRef>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
@@ -115,11 +55,26 @@ export function GlobePage() {
 
   const routes = useRouteStore((state) => state.routes);
   const selectedId = useRouteStore((state) => state.selectedId);
+  const hiddenIds = useRouteStore((state) => state.hiddenIds);
+  const heatmapEnabled = useRouteStore((state) => state.heatmapEnabled);
   const selectRoute = useRouteStore((state) => state.selectRoute);
   const ensurePlaceNames = useRouteStore((state) => state.ensurePlaceNames);
+  const fitAllNonce = useMapUiStore((state) => state.fitAllNonce);
+  const globeStyleId = useMapUiStore((state) => state.globeStyleId);
+  const globeStyle = useMemo(() => getBasemapStyle(globeStyleId, true), [globeStyleId]);
 
-  const placeGroups = useMemo(() => groupRoutesByPlace(routes), [routes]);
-  const pins = useMemo(() => placePins(routes), [routes]);
+  const geometryKey = useMemo(() => routesGeometryKey(routes), [routes]);
+
+  const visibleRoutes = useMemo(() => {
+    return routes.filter((route) => {
+      if (hiddenIds.has(route.properties.id)) return false;
+      if (selectedId && route.properties.id !== selectedId) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geometryKey, hiddenIds, selectedId]);
+
+  const pins = useMemo(() => placePins(visibleRoutes), [visibleRoutes]);
 
   const initialCenter = useMemo(() => {
     const first = routes[0];
@@ -131,12 +86,26 @@ export function GlobePage() {
     };
   }, [routes]);
 
-  useRoutesLayer(mapRef, mapLoaded, routes, selectedId, false);
+  useRoutesLayer(mapRef, mapLoaded, visibleRoutes, selectedId, heatmapEnabled);
+  useHeatmapLayer(mapRef, mapLoaded, visibleRoutes, heatmapEnabled);
   useFitRouteOnSelect(mapRef, mapLoaded, selectedId);
+  useMyLocationLayer(mapRef, mapLoaded);
 
   useEffect(() => {
     void ensurePlaceNames();
   }, [ensurePlaceNames, routes.length]);
+
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !mapLoaded) return;
+
+    applyBasemapAtmosphere(map, globeStyleId);
+    const onStyleLoad = () => applyBasemapAtmosphere(map, globeStyleId);
+    map.on('style.load', onStyleLoad);
+    return () => {
+      map.off('style.load', onStyleLoad);
+    };
+  }, [globeStyleId, mapLoaded]);
 
   useEffect(() => {
     const map = mapRef.current?.getMap();
@@ -153,9 +122,23 @@ export function GlobePage() {
     };
   }, [mapLoaded]);
 
+  useEffect(() => {
+    if (!mapLoaded || fitAllNonce === 0) {
+      return;
+    }
+
+    const map = mapRef.current?.getMap();
+    if (!map) {
+      return;
+    }
+
+    const routesToFit = routes.filter((route) => !hiddenIds.has(route.properties.id));
+    fitMapToRoutes(map, routesToFit);
+  }, [fitAllNonce, hiddenIds, mapLoaded, routes]);
+
   const flyToPlace = (place: string) => {
-    const placeRoutes = routes.filter(
-      (route) => (route.properties.placeName || 'Unknown place') === place,
+    const placeRoutes = visibleRoutes.filter(
+      (route) => (route.properties.placeName || route.properties.name) === place,
     );
     if (placeRoutes.length === 0) return;
 
@@ -165,32 +148,7 @@ export function GlobePage() {
 
     if (placeRoutes.length === 1) {
       fitMapToRoute(map, placeRoutes[0], 100);
-      return;
     }
-
-    const centers = placeRoutes
-      .map((route) => routeCentroid(route))
-      .filter((value): value is [number, number] => Boolean(value));
-    if (centers.length === 0) return;
-
-    let minLng = centers[0][0];
-    let maxLng = centers[0][0];
-    let minLat = centers[0][1];
-    let maxLat = centers[0][1];
-    for (const [lng, lat] of centers) {
-      minLng = Math.min(minLng, lng);
-      maxLng = Math.max(maxLng, lng);
-      minLat = Math.min(minLat, lat);
-      maxLat = Math.max(maxLat, lat);
-    }
-
-    map.fitBounds(
-      [
-        [minLng, minLat],
-        [maxLng, maxLat],
-      ],
-      { padding: 120, duration: 1000, maxZoom: 12 },
-    );
   };
 
   return (
@@ -198,7 +156,7 @@ export function GlobePage() {
       <MapGL
         ref={mapRef}
         initialViewState={initialCenter}
-        mapStyle={GLOBE_STYLE}
+        mapStyle={globeStyle}
         style={{ width: '100%', height: '100%' }}
         projection="globe"
         dragRotate
@@ -206,6 +164,16 @@ export function GlobePage() {
         pitchWithRotate
         minZoom={0}
         maxZoom={19}
+        cursor="grab"
+        interactiveLayerIds={[ROUTES_HIT_LAYER_ID, ROUTES_LINE_LAYER_ID, ROUTES_OUTLINE_LAYER_ID]}
+        onClick={(event) => {
+          const map = mapRef.current?.getMap();
+          if (!map) {
+            selectRoute(null);
+            return;
+          }
+          selectRoute(queryRouteIdAtPoint(map, event.point));
+        }}
         onLoad={(event) => {
           const map = event.target;
           try {
@@ -213,7 +181,7 @@ export function GlobePage() {
           } catch {
             // Projection may already be set in style.
           }
-          applyGlobeAtmosphere(map);
+          applyBasemapAtmosphere(map, globeStyleId);
           setMapLoaded(true);
         }}
       >
@@ -242,46 +210,37 @@ export function GlobePage() {
           ))}
       </MapGL>
 
-      <div className="globe-page__overlay">
-        <h2>Visited places</h2>
-        {routes.length === 0 ? (
-          <p>Draw routes on the map to see them on the globe with real satellite imagery.</p>
-        ) : (
-          <>
-            <p>
-              {placeGroups.length} {placeGroups.length === 1 ? 'place' : 'places'} · drag to rotate,
-              scroll to zoom from orbit to streets.
-            </p>
-            <ul className="globe-page__list">
-              {placeGroups.map(([place, placeRoutes]) => (
-                <li key={place} className="globe-page__group">
-                  <button
-                    type="button"
-                    className="globe-page__place-btn"
-                    onClick={() => flyToPlace(place)}
-                  >
-                    {place}
-                  </button>
-                  {placeRoutes.map((route) => (
-                    <button
-                      key={route.properties.id}
-                      type="button"
-                      className={`globe-page__item ${selectedId === route.properties.id ? 'globe-page__item--active' : ''}`}
-                      onClick={() => selectRoute(route.properties.id)}
-                    >
-                      <span
-                        className="globe-page__dot"
-                        style={{ backgroundColor: route.properties.color }}
-                      />
-                      {route.properties.name}
-                    </button>
-                  ))}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+      <div className="map-view__search">
+        <PlaceSearch
+          onSelect={(place) => {
+            const map = mapRef.current?.getMap();
+            if (!map) return;
+            if (place.bbox) {
+              map.fitBounds(
+                [
+                  [place.bbox[0], place.bbox[1]],
+                  [place.bbox[2], place.bbox[3]],
+                ],
+                { padding: 60, duration: 900, maxZoom: 14 },
+              );
+            } else {
+              map.flyTo({
+                center: [place.longitude, place.latitude],
+                zoom: 6,
+                duration: 900,
+              });
+            }
+          }}
+        />
       </div>
+
+      {heatmapEnabled && (
+        <div className="heatmap-legend">
+          <span>1 visit</span>
+          <div className="heatmap-legend__bar" />
+          <span>Many visits</span>
+        </div>
+      )}
     </div>
   );
 }

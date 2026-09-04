@@ -5,9 +5,10 @@ import { useState } from 'react';
 
 interface MapControlsProps {
   onFinish: () => void;
+  onSplit: () => void;
 }
 
-export function MapControls({ onFinish }: MapControlsProps) {
+export function MapControls({ onFinish, onSplit }: MapControlsProps) {
   const mode = useDrawStore((state) => state.mode);
   const points = useDrawStore((state) => state.points);
   const selectedPointIndex = useDrawStore((state) => state.selectedPointIndex);
@@ -123,6 +124,18 @@ export function MapControls({ onFinish }: MapControlsProps) {
             </button>
             <button type="button" className="btn btn--ghost" onClick={handleCleanSpikes}>
               Clean spikes
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={
+                selectedPointIndex == null ||
+                selectedPointIndex < 1 ||
+                selectedPointIndex > points.length - 2
+              }
+              onClick={onSplit}
+            >
+              Split here
             </button>
           </>
         )}

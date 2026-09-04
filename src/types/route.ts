@@ -8,6 +8,7 @@ export interface RouteProperties {
   color: string;
   notes?: string;
   placeName?: string;
+  tags?: string[];
   source?: 'draw' | 'gps' | 'import';
   distanceMeters: number;
 }

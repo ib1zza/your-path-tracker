@@ -1,37 +1,13 @@
-import type { StyleSpecification } from 'maplibre-gl';
+import { getBasemapStyle } from '../../lib/map/basemapStyles';
 
-function rasterStyle(
-  id: string,
-  tiles: string[],
-  attribution: string,
-  maxzoom = 19,
-): StyleSpecification {
-  return {
-    version: 8,
-    sources: {
-      [id]: {
-        type: 'raster',
-        tiles,
-        tileSize: 256,
-        attribution,
-        maxzoom,
-      },
-    },
-    layers: [
-      {
-        id,
-        type: 'raster',
-        source: id,
-      },
-    ],
-  };
-}
+export {
+  applyBasemapAtmosphere,
+  getBasemapStyle,
+  MAP_STYLE_OPTIONS,
+  type MapStyleId,
+} from '../../lib/map/basemapStyles';
 
-export const OSM_MAP_STYLE = rasterStyle(
-  'osm',
-  ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-);
+export const OSM_MAP_STYLE = getBasemapStyle('osm');
 
 export const DEFAULT_MAP_VIEW = {
   longitude: 37.6173,
