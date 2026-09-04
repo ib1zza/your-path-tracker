@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Position } from 'geojson';
 import { clearGpsDraft, getGpsDraft, saveGpsDraft } from '../db/routesDb';
-import { removeSpikePoints } from '../lib/geo/editGeometry';
+import { pointAfterVertex, removeSpikePoints } from '../lib/geo/editGeometry';
 import {
   permissionErrorMessage,
   queryGeoPermission,
@@ -38,6 +38,7 @@ interface DrawState {
   removePointAt: (index: number) => void;
   selectPoint: (index: number | null) => void;
   removeSelectedPoint: () => void;
+  addPointAfterSelected: () => void;
   cleanGpsSpikes: () => number;
   undoLastPoint: () => void;
   setPoints: (points: Position[]) => void;
@@ -250,14 +251,7 @@ export const useDrawStore = create<DrawState>((set, get) => ({
       if (index < 0 || index >= state.points.length) return state;
       if (state.points.length <= 2) return state;
       const points = state.points.filter((_, i) => i !== index);
-      let selectedPointIndex = state.selectedPointIndex;
-      if (selectedPointIndex == null) {
-        selectedPointIndex = null;
-      } else if (selectedPointIndex === index) {
-        selectedPointIndex = null;
-      } else if (selectedPointIndex > index) {
-        selectedPointIndex -= 1;
-      }
+      const selectedPointIndex = index < points.length ? index : points.length - 1;
       return { points, selectedPointIndex };
     }),
 
@@ -267,11 +261,24 @@ export const useDrawStore = create<DrawState>((set, get) => ({
     const { selectedPointIndex, points } = get();
     if (selectedPointIndex == null) {
       if (points.length > 2) {
-        set({ points: points.slice(0, -1), selectedPointIndex: null });
+        const next = points.slice(0, -1);
+        set({ points: next, selectedPointIndex: next.length - 1 });
       }
       return;
     }
     get().removePointAt(selectedPointIndex);
+  },
+
+  addPointAfterSelected: () => {
+    const { selectedPointIndex, points } = get();
+    const insertAfter = selectedPointIndex ?? points.length - 1;
+    const nextPoint = pointAfterVertex(points, insertAfter);
+    if (!nextPoint) {
+      return;
+    }
+
+    const next = [...points.slice(0, insertAfter + 1), nextPoint, ...points.slice(insertAfter + 1)];
+    set({ points: next, selectedPointIndex: insertAfter + 1 });
   },
 
   cleanGpsSpikes: () => {

@@ -166,15 +166,43 @@ a {
   color: #b91c1c;
 }
 
-.settings-menu__list {
-  right: 0;
-  left: auto;
+.modal-backdrop--page {
+  position: fixed;
+  z-index: 30;
 }
 
-.settings-menu__message {
-  margin: 0.35rem 0.65rem 0.25rem;
-  font-size: 0.75rem;
+.settings-modal__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.settings-modal__confirm {
+  margin-top: 0.35rem;
+  padding: 0.75rem;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+}
+
+.settings-modal__confirm p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #7f1d1d;
+}
+
+.settings-modal__confirm .modal__actions {
+  margin-top: 0.75rem;
+}
+
+.settings-modal__message {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
   color: #475569;
+}
+
+.settings-modal__danger span {
+  color: #b91c1c;
 }
 
 .btn--active {
@@ -191,6 +219,20 @@ a {
 .btn--danger {
   color: #b91c1c;
   border-color: #fecaca;
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: #fef2f2;
+}
+
+.btn--danger-solid {
+  background: #b91c1c;
+  border-color: #b91c1c;
+  color: #ffffff;
+}
+
+.btn--danger-solid:hover:not(:disabled) {
+  background: #991b1b;
 }
 
 .route-panel {

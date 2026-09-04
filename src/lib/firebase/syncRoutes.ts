@@ -128,6 +128,19 @@ export async function persistRoutes(routes: RouteFeature[]): Promise<void> {
   await saveRoutes(routes);
 }
 
+/**
+ * Replace the entire routes snapshot locally (and in cloud when signed in).
+ * Use after local batch ops (import dedupe, place-name fill, delete duplicates)
+ * so we do one Dexie write + one Firestore setDoc — never N round-trips.
+ */
+export async function replacePersistedRoutes(routes: RouteFeature[]): Promise<void> {
+  const uid = currentUid();
+  if (uid) {
+    await saveCloudRoutes(uid, routes);
+  }
+  await replaceAllRoutes(routes);
+}
+
 export async function removeRoute(routeId: string): Promise<void> {
   const uid = currentUid();
   if (uid) {

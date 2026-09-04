@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuthStore } from '../../stores/authStore';
+import { useDrawStore } from '../../stores/drawStore';
 import { useRouteStore } from '../../stores/routeStore';
 
 function formatLastSyncedAt(iso: string): string {
@@ -28,23 +29,42 @@ export function AuthButton() {
   const signOut = useAuthStore((state) => state.signOut);
   const syncNow = useAuthStore((state) => state.syncNow);
   const removeDuplicateRoutes = useRouteStore((state) => state.removeDuplicateRoutes);
+  const clearAllRoutes = useRouteStore((state) => state.clearAllRoutes);
   const routeCount = useRouteStore((state) => state.routes.length);
   const [isBusy, setIsBusy] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
-
-  if (!isConfigured) {
-    return null;
-  }
-
-  if (!isReady) {
-    return <span className="auth-status">Loading account…</span>;
-  }
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
 
   const closeSettings = () => {
+    if (isBusy) {
+      return;
+    }
     setSettingsOpen(false);
     setSettingsMessage(null);
+    setConfirmClearAll(false);
   };
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && !isBusy) {
+        setSettingsOpen(false);
+        setSettingsMessage(null);
+        setConfirmClearAll(false);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [settingsOpen, isBusy]);
+
+  if (isConfigured && !isReady) {
+    return <span className="auth-status">Loading account…</span>;
+  }
 
   const handleSignIn = async () => {
     setIsBusy(true);
@@ -61,7 +81,9 @@ export function AuthButton() {
     setIsBusy(true);
     try {
       await signOut();
-      closeSettings();
+      setSettingsOpen(false);
+      setSettingsMessage(null);
+      setConfirmClearAll(false);
     } finally {
       setIsBusy(false);
     }
@@ -104,41 +126,83 @@ export function AuthButton() {
     }
   };
 
+  const handleClearAllData = async () => {
+    setIsBusy(true);
+    setSettingsMessage(null);
+    try {
+      await clearAllRoutes();
+      useDrawStore.getState().cancel();
+      setConfirmClearAll(false);
+      setSettingsMessage(
+        user
+          ? 'All saved routes were deleted from this device and the cloud'
+          : 'All saved routes were deleted',
+      );
+    } catch (clearError) {
+      setSettingsMessage(
+        clearError instanceof Error ? clearError.message : 'Failed to delete routes',
+      );
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   const label = user ? user.displayName || user.email || 'Signed in' : 'Sign in with Google';
 
   return (
     <div className="auth-control">
-      {user ? (
-        <>
-          <span className="auth-status" title={user.email ?? undefined}>
-            {label}
-            {isSyncing ? ` · ${syncStatus ?? 'syncing…'}` : ''}
-            {!isSyncing && lastSyncedAt ? ` · synced ${formatLastSyncedAt(lastSyncedAt)}` : ''}
-          </span>
-          <div className="import-menu">
-            <button
-              type="button"
-              className="btn btn--ghost auth-btn"
-              aria-expanded={settingsOpen}
-              aria-haspopup="menu"
-              onClick={() => setSettingsOpen((open) => !open)}
-              disabled={isBusy || isSyncing}
-            >
-              Settings
-            </button>
-            {settingsOpen && (
-              <>
-                <button
-                  type="button"
-                  className="import-menu__backdrop"
-                  aria-label="Close settings menu"
-                  onClick={closeSettings}
-                />
-                <div className="import-menu__list settings-menu__list" role="menu">
+      {user && (
+        <span className="auth-status" title={user.email ?? undefined}>
+          {label}
+          {isSyncing ? ` · ${syncStatus ?? 'syncing…'}` : ''}
+          {!isSyncing && lastSyncedAt ? ` · synced ${formatLastSyncedAt(lastSyncedAt)}` : ''}
+        </span>
+      )}
+      <button
+        type="button"
+        className="btn btn--ghost auth-btn"
+        aria-haspopup="dialog"
+        aria-expanded={settingsOpen}
+        onClick={() => {
+          setSettingsMessage(null);
+          setConfirmClearAll(false);
+          setSettingsOpen(true);
+        }}
+        disabled={isBusy || isSyncing}
+      >
+        Settings
+      </button>
+      {!user && isConfigured && (
+        <button
+          type="button"
+          className="btn auth-btn auth-btn--google"
+          onClick={() => void handleSignIn()}
+          disabled={isBusy}
+        >
+          {isBusy ? 'Signing in…' : label}
+        </button>
+      )}
+      {error && <span className="auth-error">{error}</span>}
+      {settingsOpen && (
+        <div
+          className="modal-backdrop modal-backdrop--page"
+          role="presentation"
+          onClick={closeSettings}
+        >
+          <div
+            className="modal settings-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settings-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="settings-title">Settings</h2>
+            <div className="settings-modal__list">
+              {user && (
+                <>
                   <button
                     type="button"
                     className="import-menu__item"
-                    role="menuitem"
                     onClick={() => void handleSyncNow()}
                     disabled={isBusy || isSyncing}
                   >
@@ -148,77 +212,82 @@ export function AuthButton() {
                   <button
                     type="button"
                     className="import-menu__item"
-                    role="menuitem"
                     onClick={() => void handleSignOut()}
                     disabled={isBusy || isSyncing}
                   >
                     <span>Sign out</span>
                     <small>Keep local routes on this device</small>
                   </button>
-                  <button
-                    type="button"
-                    className="import-menu__item"
-                    role="menuitem"
-                    onClick={() => void handleRemoveDuplicates()}
-                    disabled={isBusy || isSyncing || routeCount === 0}
-                  >
-                    <span>Delete duplicates</span>
-                    <small>Same start time or name and distance</small>
-                  </button>
-                  {settingsMessage && <p className="settings-menu__message">{settingsMessage}</p>}
+                </>
+              )}
+              <button
+                type="button"
+                className="import-menu__item"
+                onClick={() => void handleRemoveDuplicates()}
+                disabled={isBusy || isSyncing || routeCount === 0}
+              >
+                <span>Delete duplicates</span>
+                <small>Same start time or name and distance</small>
+              </button>
+              {confirmClearAll ? (
+                <div className="settings-modal__confirm">
+                  <p>
+                    {user
+                      ? 'This permanently deletes all saved routes on this device and in the cloud. Your account will not be deleted.'
+                      : 'This permanently deletes all saved routes on this device.'}
+                  </p>
+                  <div className="modal__actions">
+                    <button
+                      type="button"
+                      className="btn btn--ghost"
+                      onClick={() => setConfirmClearAll(false)}
+                      disabled={isBusy}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--danger-solid"
+                      onClick={() => void handleClearAllData()}
+                      disabled={isBusy || isSyncing}
+                    >
+                      {isBusy ? 'Deleting…' : 'Delete all routes'}
+                    </button>
+                  </div>
                 </div>
-              </>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="import-menu">
-            <button
-              type="button"
-              className="btn btn--ghost auth-btn"
-              aria-expanded={settingsOpen}
-              aria-haspopup="menu"
-              onClick={() => setSettingsOpen((open) => !open)}
-              disabled={isBusy}
-            >
-              Settings
-            </button>
-            {settingsOpen && (
-              <>
+              ) : (
                 <button
                   type="button"
-                  className="import-menu__backdrop"
-                  aria-label="Close settings menu"
-                  onClick={closeSettings}
-                />
-                <div className="import-menu__list settings-menu__list" role="menu">
-                  <button
-                    type="button"
-                    className="import-menu__item"
-                    role="menuitem"
-                    onClick={() => void handleRemoveDuplicates()}
-                    disabled={isBusy || routeCount === 0}
-                  >
-                    <span>Delete duplicates</span>
-                    <small>Same start time or name and distance</small>
-                  </button>
-                  {settingsMessage && <p className="settings-menu__message">{settingsMessage}</p>}
-                </div>
-              </>
-            )}
+                  className="import-menu__item settings-modal__danger"
+                  onClick={() => {
+                    setSettingsMessage(null);
+                    setConfirmClearAll(true);
+                  }}
+                  disabled={isBusy || isSyncing || routeCount === 0}
+                >
+                  <span>Delete all my data</span>
+                  <small>
+                    {user
+                      ? 'Remove saved routes here and in the cloud. Account stays.'
+                      : 'Remove saved routes stored on this device.'}
+                  </small>
+                </button>
+              )}
+            </div>
+            {settingsMessage && <p className="settings-modal__message">{settingsMessage}</p>}
+            <div className="modal__actions">
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={closeSettings}
+                disabled={isBusy}
+              >
+                Close
+              </button>
+            </div>
           </div>
-          <button
-            type="button"
-            className="btn auth-btn auth-btn--google"
-            onClick={() => void handleSignIn()}
-            disabled={isBusy}
-          >
-            {isBusy ? 'Signing in…' : label}
-          </button>
-        </>
+        </div>
       )}
-      {error && <span className="auth-error">{error}</span>}
     </div>
   );
 }

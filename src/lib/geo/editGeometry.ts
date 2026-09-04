@@ -1,5 +1,29 @@
 import type { Position } from 'geojson';
 
+/** Insert after `index`: midpoint to the next vertex, or extend the last segment. */
+export function pointAfterVertex(points: Position[], index: number): Position | null {
+  if (index < 0 || index >= points.length) {
+    return null;
+  }
+
+  const current = points[index];
+  const next = points[index + 1];
+  if (next) {
+    return [(current[0] + next[0]) / 2, (current[1] + next[1]) / 2];
+  }
+
+  const prev = points[index - 1];
+  if (prev) {
+    const lng = current[0] + (current[0] - prev[0]);
+    const lat = current[1] + (current[1] - prev[1]);
+    if (lng !== current[0] || lat !== current[1]) {
+      return [lng, lat];
+    }
+  }
+
+  return [current[0] + 0.0001, current[1]];
+}
+
 function haversineMeters(a: Position, b: Position): number {
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const lat1 = toRad(a[1]);

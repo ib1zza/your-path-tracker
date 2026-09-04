@@ -14,6 +14,7 @@ export function MapControls({ onFinish }: MapControlsProps) {
   const cancel = useDrawStore((state) => state.cancel);
   const undoLastPoint = useDrawStore((state) => state.undoLastPoint);
   const removeSelectedPoint = useDrawStore((state) => state.removeSelectedPoint);
+  const addPointAfterSelected = useDrawStore((state) => state.addPointAfterSelected);
   const cleanGpsSpikes = useDrawStore((state) => state.cleanGpsSpikes);
   const gpsError = useDrawStore((state) => state.gpsError);
   const gpsPaused = useDrawStore((state) => state.gpsPaused);
@@ -43,7 +44,7 @@ export function MapControls({ onFinish }: MapControlsProps) {
       : mode === 'freehand'
         ? 'Hold and drag to draw. Release to finish. Backspace / Ctrl+Z to undo.'
         : mode === 'edit'
-          ? 'Drag points to move. Click a point + Delete to remove. Double-click deletes. Shift+click adds. Clean spikes removes GPS jumps.'
+          ? 'Drag points to move. Add/Delete act on the selected point (or the last one). Double-click deletes. Shift+click adds. Clean spikes removes GPS jumps.'
           : 'Keep this tab open while walking. Location stays allowed after the first grant.';
 
   const handleCleanSpikes = () => {
@@ -109,6 +110,9 @@ export function MapControls({ onFinish }: MapControlsProps) {
         </button>
         {mode === 'edit' && (
           <>
+            <button type="button" className="btn btn--ghost" onClick={addPointAfterSelected}>
+              {selectedPointIndex != null ? 'Add point' : 'Add last point'}
+            </button>
             <button
               type="button"
               className="btn btn--ghost"

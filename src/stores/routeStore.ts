@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import {
   persistRoute,
   persistRoutes,
+  replacePersistedRoutes,
   removeRoute,
   loadRoutesForCurrentUser,
 } from '../lib/firebase/syncRoutes';
@@ -47,6 +48,7 @@ interface RouteState {
   ) => Promise<{ imported: number; skipped: number }>;
   applyRoutes: (routes: RouteFeature[]) => void;
   removeDuplicateRoutes: () => Promise<{ removed: number }>;
+  clearAllRoutes: () => Promise<void>;
 }
 
 const PLACE_NAME_GAP_MS = 1100;
@@ -317,5 +319,14 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     });
 
     return { removed: duplicateIds.length };
+  },
+
+  clearAllRoutes: async () => {
+    await replacePersistedRoutes([]);
+    set({
+      routes: [],
+      selectedId: null,
+      hiddenIds: new Set(),
+    });
   },
 }));
