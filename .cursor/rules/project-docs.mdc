@@ -9,14 +9,14 @@ alwaysApply: true
 
 ## Суть
 
-Offline SPA: маршруты как GeoJSON `RouteFeature` → IndexedDB (Dexie) → MapLibre карта + globe + heatmap. Бэкенда нет.
+SPA: маршруты как GeoJSON `RouteFeature` → IndexedDB (кэш) ± Firestore → MapLibre карта + globe + heatmap. Firebase опционален.
 
 ## Ключевые файлы
 
 - `src/types/route.ts` — модель данных
-- `src/stores/routeStore.ts`, `src/stores/drawStore.ts` — состояние
+- `src/stores/routeStore.ts`, `drawStore.ts`, `authStore.ts`, `mapUiStore.ts`
 - `src/features/map/MapView.tsx` — orchestrator карты
-- `src/db/routesDb.ts` — persistence
+- `src/lib/firebase/syncRoutes.ts`, `src/db/routesDb.ts` — persistence
 - `src/lib/geo/*` — чистая гео-логика (без React)
 
 ## Инварианты
@@ -24,22 +24,25 @@ Offline SPA: маршруты как GeoJSON `RouteFeature` → IndexedDB (Dexie
 - Координаты GeoJSON: `[lng, lat]`
 - ID маршрута: `properties.id` = ключ Dexie = MapLibre `promoteId`
 - Минимум 2 точки в LineString
-- Слои карты — imperative hooks в `useMapLayers.ts`, не `<Source>`/`<Layer>`
-- Nominatim: не вызывать reverse geocode в цикле (rate limit ~1.1 с)
+- Слои карты — imperative hooks, не `<Source>`/`<Layer>`
+- Nominatim: не reverse geocode в цикле (~1.1 с)
+- CRUD маршрутов через `persistRoute` / `persistRoutes` / `removeRoute`
 - Архитектура: `lib/geo → stores → features → pages`
 
 ## Где менять
 
 | Задача | Файл |
 |--------|------|
-| CRUD маршрутов | `routeStore.ts` |
+| CRUD маршрутов | `routeStore.ts` + `syncRoutes.ts` |
+| Auth / sync | `authStore.ts`, `lib/firebase/*` |
 | Рисование / GPS | `drawStore.ts`, `features/draw/` |
+| My location / fit all | `mapUiStore.ts`, `useMyLocation.ts` |
 | Отображение на карте | `useMapLayers.ts` |
 | Импорт/экспорт | `lib/geo/exportImport.ts` |
 | Стили UI | `src/index.css` |
 
 ## Скрипты
 
-`npm run dev` · `npm run build` · `npm run lint` (oxlint)
+`yarn dev` · `yarn build` · `yarn lint` · `yarn format` · `make check`
 
 Conventional commits (`feat:`, `fix:`, …). Не коммитить без явной просьбы пользователя.

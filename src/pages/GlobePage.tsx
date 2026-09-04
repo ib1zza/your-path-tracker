@@ -1,17 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import MapGL, {
-  Marker,
-  NavigationControl,
-  type MapRef,
-} from 'react-map-gl/maplibre';
+import MapGL, { Marker, NavigationControl, type MapRef } from 'react-map-gl/maplibre';
 import type { Map as MaplibreMap, StyleSpecification } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { fitMapToRoute } from '../lib/geo/fitBounds';
 import { routeCentroid } from '../lib/geo/globe';
-import {
-  useFitRouteOnSelect,
-  useRoutesLayer,
-} from '../features/map/useMapLayers';
+import { useFitRouteOnSelect, useRoutesLayer } from '../features/map/useMapLayers';
 import { useRouteStore } from '../stores/routeStore';
 import type { RouteFeature } from '../types/route';
 

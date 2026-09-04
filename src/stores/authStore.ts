@@ -23,10 +23,7 @@ interface AuthState {
   syncNow: () => Promise<void>;
 }
 
-async function runCloudSync(
-  uid: string,
-  onProgress: (message: string) => void,
-): Promise<void> {
+async function runCloudSync(uid: string, onProgress: (message: string) => void): Promise<void> {
   const routes = await syncRoutesForUser(uid, onProgress);
   useRouteStore.getState().applyRoutes(routes);
 }

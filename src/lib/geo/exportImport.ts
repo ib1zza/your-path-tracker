@@ -32,7 +32,7 @@ export function exportRoute(route: RouteFeature): void {
     type: 'FeatureCollection',
     features: [route],
   };
-  const safeName = route.properties.name.replace(/[^\w\-]+/g, '-').toLowerCase();
+  const safeName = route.properties.name.replace(/[^\w-]+/g, '-').toLowerCase();
   downloadJson(collection, `${safeName || 'route'}.geojson`);
 }
 
@@ -161,7 +161,11 @@ export function parseGpxText(
         ...feature,
         properties: {
           ...(feature.properties ?? {}),
-          name: fallbackName.replace(/\.[^.]+$/, '').split('/').pop() || fallbackName,
+          name:
+            fallbackName
+              .replace(/\.[^.]+$/, '')
+              .split('/')
+              .pop() || fallbackName,
         },
       };
     }
@@ -218,9 +222,7 @@ export function parseTcxText(text: string, existingCount = 0): RouteFeature[] {
 
     const simplified = simplifyLine(rawCoordinates, 0.00008);
     const coordinates =
-      simplified.length >= 2
-        ? (simplified as [number, number][])
-        : rawCoordinates;
+      simplified.length >= 2 ? (simplified as [number, number][]) : rawCoordinates;
     const name =
       source.getElementsByTagName('Name')[0]?.textContent?.trim() ||
       source.getAttribute('Sport') ||
@@ -261,13 +263,9 @@ async function parseZipRoutes(
   const gpxFiles = entries.filter((entry) => entry.name.toLowerCase().endsWith('.gpx'));
   const kmlFiles = entries.filter((entry) => entry.name.toLowerCase().endsWith('.kml'));
   const tcxFiles = entries.filter((entry) => entry.name.toLowerCase().endsWith('.tcx'));
-  const geojsonFiles = entries.filter((entry) =>
-    /\.(geojson|json)$/i.test(entry.name),
-  );
+  const geojsonFiles = entries.filter((entry) => /\.(geojson|json)$/i.test(entry.name));
 
-  const healthRoutes = gpxFiles.filter((entry) =>
-    /workout-routes/i.test(entry.name),
-  );
+  const healthRoutes = gpxFiles.filter((entry) => /workout-routes/i.test(entry.name));
   const preferredGpx =
     kind === 'health' || (kind === 'auto' && healthRoutes.length > 0)
       ? healthRoutes.length > 0

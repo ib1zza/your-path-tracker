@@ -14,14 +14,11 @@ export function fitMapToRoute(map: Map, route: RouteFeature, padding = 80): void
     return;
   }
 
-  map.fitBounds(
-    [bounds[0], bounds[1], bounds[2], bounds[3]],
-    {
-      padding,
-      duration: 800,
-      maxZoom: 16,
-    },
-  );
+  map.fitBounds([bounds[0], bounds[1], bounds[2], bounds[3]], {
+    padding,
+    duration: 800,
+    maxZoom: 16,
+  });
 }
 
 export function fitMapToRoutes(map: Map, routes: RouteFeature[], padding = 80): void {
@@ -34,12 +31,9 @@ export function fitMapToRoutes(map: Map, routes: RouteFeature[], padding = 80): 
     return;
   }
 
-  map.fitBounds(
-    [bounds[0], bounds[1], bounds[2], bounds[3]],
-    {
-      padding,
-      duration: 800,
-      maxZoom: 14,
-    },
-  );
+  map.fitBounds([bounds[0], bounds[1], bounds[2], bounds[3]], {
+    padding,
+    duration: 800,
+    maxZoom: 14,
+  });
 }

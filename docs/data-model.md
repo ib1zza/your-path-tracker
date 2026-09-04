@@ -77,7 +77,7 @@ interface GpsDraft {
 
 Используется для восстановления незавершённой GPS-сессии после reload.
 
-## API базы данных
+CRUD маршрутов из UI идёт через `persistRoute` / `persistRoutes` / `removeRoute` (`lib/firebase/syncRoutes.ts`), а не напрямую в Dexie.
 
 ```typescript
 // src/db/routesDb.ts
@@ -85,12 +85,17 @@ interface GpsDraft {
 getAllRoutes(): Promise<RouteFeature[]>
 saveRoute(route: RouteFeature): Promise<void>
 saveRoutes(routes: RouteFeature[]): Promise<void>  // bulkPut
+replaceAllRoutes(routes: RouteFeature[]): Promise<void>  // clear + bulkPut (cloud overlay)
 deleteRoute(id: string): Promise<void>
 
 getGpsDraft(): Promise<GpsDraft | undefined>
 saveGpsDraft(draft: Omit<GpsDraft, 'id'>): Promise<void>
 clearGpsDraft(): Promise<void>
 ```
+
+## Firestore (залогиненный пользователь)
+
+Документ `users/{uid}/sync/routes`: `routesJson` + `updatedAt` + `routeCount`. Подробности: [firebase-sync.md](./firebase-sync.md). GPS draft в cloud не пишется.
 
 ## Дата активности маршрута
 
@@ -104,7 +109,9 @@ getRouteActivityDate(route): Date
 1. Дата из имени (`YYYY-MM-DD` regex)
 2. `properties.createdAt`
 
-При импорте GPX/Health `extractImportedCreatedAt` пытается извлечь дату из properties (`time`, `coordinateProperties.times`) или имени файла.
+При импорте GPX/Health `extractImportedCreatedAt` берёт дату из properties (`time`, `coordinateProperties.times`) или имени. Имя может содержать не только `YYYY-MM-DD`, но и время (`YYYY-MM-DD_HH-MM-SS` или `YYYY-MM-DD h:mm am/pm`).
+
+Для Apple Health **дедуп** использует `getRouteTimeKey` (минута) и запасной `getRouteLooseDedupKey` (нормализованное имя + дистанция с шагом 100 м). `findDuplicateRouteIds` оставляет первый экземпляр, остальные id — кандидаты на удаление.
 
 ## Упрощение геометрии
 
@@ -136,4 +143,4 @@ Export = `FeatureCollection` с полными `RouteFeature` (все properties
 
 Имена файлов:
 - All: `path-tracker-routes-{timestamp}.geojson`
-- Single: `{sanitized-name}.geojson`
+- Single: `{sanitized-name}.geojson` (`name.replace(/[^\w-]+/g, '-')`)

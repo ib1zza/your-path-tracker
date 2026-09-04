@@ -86,13 +86,7 @@ export function MapView() {
 
   useRoutesLayer(mapRef, mapLoaded, visibleRoutes, selectedId, heatmapEnabled);
   useHeatmapLayer(mapRef, mapLoaded, visibleRoutes, heatmapEnabled);
-  useDrawPreviewLayer(
-    mapRef,
-    mapLoaded,
-    drawPoints,
-    selectedPointIndex,
-    mode === 'edit',
-  );
+  useDrawPreviewLayer(mapRef, mapLoaded, drawPoints, selectedPointIndex, mode === 'edit');
   useFitRouteOnSelect(mapRef, mapLoaded, selectedId);
   useMyLocationLayer(mapRef, mapLoaded);
 
@@ -171,8 +165,7 @@ export function MapView() {
 
   const handleSaveRoute = async () => {
     const { mode: currentMode, points: currentPoints } = useDrawStore.getState();
-    const simplified =
-      currentMode === 'freehand' ? simplifyLine(currentPoints) : currentPoints;
+    const simplified = currentMode === 'freehand' ? simplifyLine(currentPoints) : currentPoints;
 
     if (!Array.isArray(simplified) || simplified.length < 2) {
       return;
@@ -357,9 +350,7 @@ export function MapView() {
       {saveDialog.open && (
         <div className="modal-backdrop" role="presentation">
           <div className="modal" role="dialog" aria-modal="true" aria-labelledby="save-route-title">
-            <h2 id="save-route-title">
-              {editingRouteId ? 'Save edits' : 'Save route'}
-            </h2>
+            <h2 id="save-route-title">{editingRouteId ? 'Save edits' : 'Save route'}</h2>
             <label className="field">
               <span>Name</span>
               <input
@@ -391,7 +382,11 @@ export function MapView() {
               <button type="button" className="btn btn--ghost" onClick={handleCancelSave}>
                 Cancel
               </button>
-              <button type="button" className="btn btn--primary" onClick={() => void handleSaveRoute()}>
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={() => void handleSaveRoute()}
+              >
                 Save
               </button>
             </div>

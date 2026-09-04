@@ -6,6 +6,7 @@
 flowchart TB
   subgraph UI [React UI]
     Layout
+    AuthButton
     MapView
     GlobePage
     RoutePanel
@@ -15,16 +16,20 @@ flowchart TB
   subgraph State [Zustand]
     routeStore
     drawStore
+    authStore
+    mapUiStore
   end
 
-  subgraph Persistence [IndexedDB via Dexie]
-    routes[(routes)]
+  subgraph Persistence [Persistence]
+    routesDb[(IndexedDB Dexie)]
+    firestore[(Firestore users/uid/sync/routes)]
     gpsDraft[(gpsDraft)]
   end
 
   subgraph External [External APIs]
     Nominatim
-    TileServers[OSM / CARTO / Esri tiles]
+    TileServers[OSM / Esri tiles]
+    GoogleAuth[Google Auth]
   end
 
   subgraph GeoLib [src/lib/geo]
@@ -36,48 +41,69 @@ flowchart TB
 
   Layout --> MapView
   Layout --> RoutePanel
+  Layout --> AuthButton
+  AuthButton --> authStore
   MapView --> routeStore
   MapView --> drawStore
+  MapView --> mapUiStore
   RoutePanel --> routeStore
-  routeStore --> routes
-  drawStore --> gpsDraft
+  RoutePanel --> mapUiStore
+  authStore --> routeStore
   routeStore --> GeoLib
   MapView --> GeoLib
   routeStore --> Nominatim
   MapView --> TileServers
   GlobePage --> TileServers
+  authStore --> GoogleAuth
+  routeStore --> syncRoutes
+  syncRoutes --> routesDb
+  syncRoutes --> firestore
+  drawStore --> gpsDraft
 ```
+
+`syncRoutes` — `src/lib/firebase/syncRoutes.ts`. Без Firebase Firestore-ветка не используется.
 
 ## Структура каталогов
 
 ```
 your-path-tracker/
 ├── docs/                    # Документация (этот каталог)
+├── plans/                   # Roadmap (p0–p3), не runtime
 ├── public/                  # Статика: favicon, manifest, icons
+├── scripts/                 # утилиты (authorized domains и т.п.)
 ├── src/
-│   ├── App.tsx              # BrowserRouter, loadRoutes on mount
+│   ├── App.tsx              # BrowserRouter, authStore.init
 │   ├── main.tsx
-│   ├── index.css            # Все стили приложения (CSS classes)
+│   ├── index.css
 │   ├── components/
-│   │   └── Layout.tsx       # Shell: header, nav, RoutePanel, Outlet
+│   │   └── Layout.tsx
 │   ├── pages/
-│   │   ├── MapPage.tsx      # Thin wrapper → MapView
-│   │   └── GlobePage.tsx    # Globe map + place overlay
+│   │   ├── MapPage.tsx
+│   │   └── GlobePage.tsx
 │   ├── features/
-│   │   ├── map/             # Карта, слои, controls, search
-│   │   ├── draw/            # Hooks: freehand, GPS, vertex edit
-│   │   └── routes/          # RoutePanel, RouteItem, StatsPanel
+│   │   ├── auth/            # AuthButton
+│   │   ├── map/
+│   │   ├── draw/
+│   │   └── routes/
 │   ├── stores/
-│   │   ├── routeStore.ts    # CRUD маршрутов, import, heatmap, map style
-│   │   └── drawStore.ts     # Режим рисования, GPS session
+│   │   ├── routeStore.ts
+│   │   ├── drawStore.ts
+│   │   ├── authStore.ts
+│   │   └── mapUiStore.ts
 │   ├── db/
-│   │   └── routesDb.ts      # Dexie schema
+│   │   ├── routesDb.ts      # Dexie
+│   │   └── routesFirestore.ts
 │   ├── types/
-│   │   └── route.ts         # RouteFeature, helpers
+│   │   └── route.ts
 │   └── lib/
-│       ├── geo/             # Чистые функции геоданных
+│       ├── firebase/        # config, auth, sync, sanitize
+│       ├── geo/
 │       └── map/
-│           └── setupMapLibre.ts  # Worker URL для MapLibre
+│           └── setupMapLibre.ts
+├── Makefile
+├── .yarnrc.yml
+├── firebase.json
+├── firestore.rules
 ├── index.html
 ├── vite.config.ts
 ├── package.json
@@ -88,23 +114,26 @@ your-path-tracker/
 
 ### Feature-based folders
 
-Код группируется по фичам (`features/map`, `features/draw`, `features/routes`), а не по типу файла. Общая логика — в `lib/`.
+Код группируется по фичам (`features/map`, `features/draw`, `features/routes`, `features/auth`). Общая логика — в `lib/`.
 
 ### Map layers через imperative MapLibre API
 
-React-компонент `Map` из react-map-gl рендерит контейнер; слои маршрутов, heatmap и preview добавляются **имperatively** в хуках `useMapLayers.ts` через `map.addSource` / `map.addLayer`. Это сознательный выбор для производительности при частых обновлениях GeoJSON.
+React-компонент `Map` из react-map-gl рендерит контейнер; слои маршрутов, heatmap, preview и «моя локация» добавляются **имperatively** через `map.addSource` / `map.addLayer`.
 
-### Единый источник правды для маршрутов
+### Источники правды для маршрутов
 
-- **Persisted**: IndexedDB (`routes` table)
-- **Runtime**: `routeStore.routes`
-- **Draw preview**: `drawStore.points` (ещё не сохранено)
+| Контекст | Источник |
+|----------|----------|
+| Гость / Firebase выключен | IndexedDB `routes` |
+| Залогинен, cloud непустой | Firestore документ sync; Dexie = кэш |
+| Preview рисования | `drawStore.points` (ещё не сохранено) |
+| GPS draft | IndexedDB `gpsDraft` (не в cloud) |
 
-При сохранении draw → `RouteFeature` → `addRoute` → Dexie → обновление store.
+Сохранение: `RouteFeature` → `routeStore.addRoute` / `updateRoute` → `persistRoute` → Dexie и при uid ещё Firestore.
 
 ### GeoJSON как модель данных
 
-Маршрут = `Feature<LineString, RouteProperties>`. ID хранится в `properties.id` и используется как primary key в Dexie и `promoteId` в MapLibre source.
+Маршрут = `Feature<LineString, RouteProperties>`. ID в `properties.id` — ключ Dexie и `promoteId` в MapLibre. В Firestore тот же массив сериализуется в `routesJson`.
 
 ## Роутинг
 
@@ -119,21 +148,24 @@ React-компонент `Map` из react-map-gl рендерит контейн
 </Routes>
 ```
 
-`Layout` показывает `RoutePanel`, `DrawToolbar`, `GpsResumePrompt` только на `/` (map page).
+`Layout` показывает `DrawToolbar`, `GpsResumePrompt`, `RoutePanel` только на `/`. `AuthButton` — на всех страницах.
 
 ## Инициализация приложения
 
-1. `main.tsx` — `setupMapLibre` (worker), CSS, React root
-2. `App.tsx` — `useEffect` → `routeStore.loadRoutes()`
-3. `loadRoutes` — читает IndexedDB, thinRoutes, backfill дат, sort, deferred geocoding
+1. `main.tsx` — `setupMapLibre` (worker URL `/maplibre/...`), CSS, React root
+2. `App.tsx` — `authStore.init()`
+3. Firebase выключен → `routeStore.loadRoutes()` из Dexie
+4. Firebase включён → `onAuthStateChanged` → sync или `loadRoutes`
+5. `loadRoutes` — `loadRoutesForCurrentUser` → thinRoutes → backfill дат → persist changes → sort → deferred geocoding
 
 ## Зависимости между модулями
 
 | Модуль | Зависит от | Не должен зависеть от |
 |--------|------------|------------------------|
-| `lib/geo/*` | turf, types | React, stores |
-| `stores/*` | db, lib/geo | React components |
+| `lib/geo/*` | turf, types | React, stores, firebase |
+| `lib/firebase/*` | firebase SDK, db, types | React components |
+| `stores/*` | db, lib/geo, lib/firebase | React components |
 | `features/*` | stores, lib | другие features (минимально) |
 | `useMapLayers` | lib/geo, routeStore (read) | drawStore |
 
-При добавлении функциональности предпочитайте: **lib → store → feature component**.
+При добавлении функциональности: **lib → store → feature component**. Persistence маршрутов — через `syncRoutes`, не прямой вызов Dexie из UI.

@@ -1,55 +1,61 @@
 # Руководство для AI-агентов
 
-Этот документ оптимизирован для быстрого онбординга coding-агентов в репозиторий **your-path-tracker** (Path Tracker).
+Этот документ — быстрый онбординг coding-агентов в **your-path-tracker** (Path Tracker).
 
 ## Что это за проект (one-liner)
 
-Offline-first SPA: рисование/GPS/импорт маршрутов → GeoJSON в IndexedDB → MapLibre карта + 3D globe + heatmap.
+SPA: рисование/GPS/импорт маршрутов → GeoJSON → IndexedDB (кэш) ± Firestore → MapLibre карта + globe + heatmap. Firebase опционален.
 
 ## Первые файлы для чтения
 
 1. `src/types/route.ts` — модель данных
-2. `src/stores/routeStore.ts` + `src/stores/drawStore.ts` — бизнес-логика
-3. `src/features/map/MapView.tsx` — главный orchestrator
-4. `src/db/routesDb.ts` — persistence
-5. `src/lib/geo/exportImport.ts` — если задача про импорт/экспорт
+2. `src/stores/routeStore.ts` + `drawStore.ts` + `authStore.ts` + `mapUiStore.ts`
+3. `src/features/map/MapView.tsx` — orchestrator карты
+4. `src/lib/firebase/syncRoutes.ts` + `src/db/routesDb.ts` — persistence
+5. `src/lib/geo/exportImport.ts` — импорт/экспорт
 
 ## Карта «где что менять»
 
 | Задача | Куда смотреть |
 |--------|---------------|
 | Новый формат импорта | `lib/geo/exportImport.ts`, `RoutePanel` IMPORT_OPTIONS |
-| Изменить отображение маршрутов | `useMapLayers.ts` |
-| Новый режим рисования | `drawStore` DrawMode + hook в `features/draw/` + `DrawToolbar` |
-| CRUD / сортировка маршрутов | `routeStore.ts` |
-| Новое поле у маршрута | `types/route.ts` → import normalize → UI RouteItem |
+| Отображение маршрутов | `useMapLayers.ts` |
+| Режим рисования | `drawStore` DrawMode + `features/draw/` + `DrawToolbar` |
+| CRUD маршрутов | `routeStore.ts` → `syncRoutes.ts` (не прямой Dexie из UI) |
+| Auth / cloud sync | `authStore.ts`, `lib/firebase/*`, `AuthButton` |
+| Fit all / my location | `mapUiStore.ts`, `fitBounds.ts`, `useMyLocation.ts` |
+| Поле у маршрута | `types/route.ts` → import normalize → RouteItem |
 | Геокодинг / поиск | `lib/geo/geocode.ts`, `PlaceSearch.tsx` |
-| Статистика / heatmap algo | `lib/geo/heatmap.ts`, `stats.ts` |
-| Стили карты | `mapConfig.ts`, `GlobePage` GLOBE_STYLE |
+| Статистика / heatmap | `lib/geo/heatmap.ts`, `stats.ts` |
+| Стиль 2D-карты | `mapConfig.ts` (`OSM_MAP_STYLE`); Globe — `GlobePage` GLOBE_STYLE |
 | CSS / layout | `index.css`, `Layout.tsx` |
-| DB migration | `db/routesDb.ts` Dexie version bump |
+| Dexie schema | `db/routesDb.ts` version bump |
+| Firestore документ | `db/routesFirestore.ts`, `firestore.rules` |
 
 ## Инварианты (не ломать)
 
-1. **GeoJSON coord order**: `[lng, lat]` always
-2. **Route id**: `properties.id` = Dexie key = MapLibre promoteId
-3. **Min 2 points** для LineString маршрута
-4. **thinRoutes** на load — не отключать без причины (perf)
-5. **Nominatim rate limit** — не вызывать reverse geocode в tight loop
-6. **GPS draft** — `clearGpsDraft` при cancel/setMode away from gps
-7. **Focus mode** — selectedId скрывает другие routes на карте (MapView filter)
+1. **GeoJSON coord order**: `[lng, lat]`
+2. **Route id**: `properties.id` = Dexie key = MapLibre `promoteId`
+3. **Min 2 points** для LineString
+4. **thinRoutes** на load — не отключать без причины
+5. **Nominatim rate limit** — не reverse geocode в tight loop
+6. **GPS draft** — `clearGpsDraft` при cancel/уходе с gps; draft не в Firestore
+7. **Focus mode** — `selectedId` скрывает другие routes (MapView filter)
+8. **Persistence** — CRUD через `persistRoute` / `persistRoutes` / `removeRoute`
+9. **Firebase-first** — непустой cloud затирает локальный кэш при sync
+10. **Firestore** — без `undefined` в документе (`sanitizeForFirestore`)
 
 ## Архитектурные правила
 
 ```
 lib/geo  →  stores  →  features  →  pages
-         ↘ db ↗
+lib/firebase ↗     ↘ db ↗
 ```
 
 - Не импортировать React components из `lib/`
 - Не хранить Map instance в Zustand
-- Map layers — imperative hooks, не react-map-gl `<Source>`/`<Layer>` для routes
-- Side effects persistence — в store actions, не в components (кроме one-off geocode on save)
+- Слои карты — imperative hooks, не `<Source>`/`<Layer>` для routes
+- Side effects persistence — в store actions
 
 ## Частые паттерны кода
 
@@ -71,23 +77,26 @@ const geometryKey = useMemo(() => routesGeometryKey(routes), [routes]);
 ```typescript
 const geometry = { type: 'LineString' as const, coordinates: points };
 const distanceMeters = calculateDistanceMeters(geometry);
-// → RouteFeature → addRoute
+// → RouteFeature → addRoute → persistRoute
 ```
 
 ## Скрипты
 
 ```bash
-npm run dev     # разработка
-npm run build   # typecheck + bundle
-npm run lint    # oxlint
+yarn install
+yarn dev         # разработка
+yarn build       # typecheck + bundle
+yarn lint        # oxlint
+yarn format      # Prettier
+make check       # lint + format-check + build
 ```
 
-Тестов нет — проверяйте вручную в браузере.
+Тестов нет — проверяйте вручную (чеклист в getting-started). Пакетный менеджер — **Yarn 4**, не npm (`yarn.lock`).
 
 ## Git / commits
 
 Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`  
-Reference GitLab issues: `#123` in messages if applicable.
+GitLab issues: `#123` в сообщениях, если есть номер.
 
 **Не коммитить** без явной просьбы пользователя.
 
@@ -95,47 +104,51 @@ Reference GitLab issues: `#123` in messages if applicable.
 
 - Минимальный diff
 - Не рефакторить unrelated code
-- Не добавлять тесты/docs unless requested (docs уже в /docs)
-- Match existing naming, no over-abstraction
+- Не добавлять тесты/docs unless requested
+- Match existing naming
 
-## External services (no API keys)
+## External services
 
 | Service | Usage |
 |---------|-------|
-| tile.openstreetmap.org | OSM basemap |
-| basemaps.cartocdn.com | Dark + labels |
-| tile.opentopomap.org | Topo |
+| tile.openstreetmap.org | OSM 2D basemap |
 | server.arcgisonline.com | Globe satellite |
+| basemaps.cartocdn.com | Globe labels |
 | nominatim.openstreetmap.org | Search + reverse geocode |
+| Firebase Auth / Firestore | Опционально, `VITE_FIREBASE_*` |
 
 ## Debugging tips
 
-- **Routes not showing**: check visibleRoutes filter (hiddenIds, selectedId, editingRouteId)
+- **Routes not showing**: visibleRoutes (hiddenIds, selectedId, editingRouteId)
 - **Selection highlight lost**: setData clears feature-state — useRoutesLayer re-applies
-- **Import date wrong**: check extractImportedCreatedAt + loadRoutes backfill logic
-- **GPS not recording**: permission, accuracy >55m filter, gpsPaused
-- **Map blank after style change**: expected remount; wait for onLoad
+- **Import date / Health dupes**: `extractImportedCreatedAt`, `getRouteTimeKey`, `applyImportedRoutes`
+- **GPS not recording**: permission, accuracy >55m, gpsPaused
+- **Map blank after deploy**: worker `/maplibre/maplibre-gl-worker.mjs` (vite plugin)
+- **Sign-in hidden**: нет полного `.env`
+- **Cloud overwrote local**: ожидаемо, если Firestore документ непустой
+- **Sync stuck**: `authStore.error` / `syncStatus`
 
 ## Документация
 
-Полный index: [README.md](./README.md)
+Индекс: [README.md](./README.md). Auth/sync: [firebase-sync.md](./firebase-sync.md).
 
-## Пример flow: добавить поле `tags: string[]` к маршруту
+## Пример flow: добавить поле `tags: string[]`
 
-1. Extend `RouteProperties` in `types/route.ts`
+1. `RouteProperties` в `types/route.ts`
 2. `normalizeImportedFeature` — optional import
-3. `MapView.handleSaveRoute` — if needed on create
-4. `RouteItem` — UI to edit tags
-5. `updateRoute` already persists full feature
-6. Export/import round-trip automatic via GeoJSON properties
-7. No DB schema change (Dexie stores whole object)
+3. `MapView.handleSaveRoute` — если нужно при create
+4. `RouteItem` — UI
+5. `updateRoute` → `persistRoute` (Dexie + Firestore)
+6. Export/import через GeoJSON properties
+7. Dexie schema не менять (целый объект). Firestore: не писать `undefined`
 
-## Пример flow: новый basemap style
+## Пример flow: новый 2D basemap
 
-1. Add to `MapStyleId` union in `mapConfig.ts`
-2. Add entry in `MAP_STYLES`
-3. Update `loadMapStyle()` valid values in routeStore
-4. DrawToolbar select auto-populates from `Object.keys(MAP_STYLES)`
+Сейчас стиль один (`OSM_MAP_STYLE`). Чтобы вернуть переключатель:
+
+1. Стили в `mapConfig.ts`
+2. Состояние (store или local) + `mapStyle` на `<Map>` в `MapView`
+3. UI в `DrawToolbar`
 
 ## Контакты / product name
 

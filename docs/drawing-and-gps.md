@@ -120,6 +120,10 @@ Shown when `mode !== 'none'`. Context-specific hints and actions:
 
 Header badge during GPS: Recording/Paused, point count, distance, accuracy.
 
+## My location (не режим рисования)
+
+`DrawToolbar` «My location» / «Follow» → `mapUiStore` + `useMyLocationLayer`. Отдельный geolocation watch, не пишет точки в маршрут и не связан с `gpsDraft`.
+
 ## Finish → Save dialog
 
 `MapView.openSaveDialog`:
@@ -133,7 +137,7 @@ Header badge during GPS: Recording/Paused, point count, distance, accuracy.
 1. Simplify if freehand
 2. Build RouteFeature with uuid, pickRouteColor
 3. Optional inline geocode (resolveRoutePlaceName)
-4. addRoute → fitMapToRoute → clear GPS if needed
+4. `addRoute` (внутри `persistRoute`) → `fitMapToRoute` → clear GPS if needed
 
 ## Типичные баги / edge cases
 

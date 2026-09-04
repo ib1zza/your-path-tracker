@@ -90,7 +90,10 @@ export function useDrawKeyboard(onFinish: () => void) {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+      if (
+        target &&
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+      ) {
         return;
       }
 
@@ -99,9 +102,7 @@ export function useDrawKeyboard(onFinish: () => void) {
         return;
       }
 
-      const isDelete =
-        event.key === 'Backspace' ||
-        event.key === 'Delete';
+      const isDelete = event.key === 'Backspace' || event.key === 'Delete';
 
       if (isDelete && mode === 'edit') {
         event.preventDefault();

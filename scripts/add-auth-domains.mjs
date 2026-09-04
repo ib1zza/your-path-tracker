@@ -26,7 +26,9 @@ const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
 });
 
 if (!tokenResponse.ok) {
-  console.error('Failed to refresh Firebase CLI token. Run: npx firebase-tools@latest login --reauth');
+  console.error(
+    'Failed to refresh Firebase CLI token. Run: npx firebase-tools@latest login --reauth',
+  );
   process.exit(1);
 }
 

@@ -9,10 +9,10 @@
 | `distance.ts` | `calculateDistanceMeters` | Turf `length` по LineString |
 | `simplify.ts` | `simplifyLine` | Turf Douglas-Peucker simplify |
 | `routeGeometry.ts` | `routesGeometryKey`, `thinRoute`, `thinRoutes` | Cache keys, decimation >400 pts |
-| `fitBounds.ts` | `fitMapToRoute` | Turf bbox → map.fitBounds |
+| `fitBounds.ts` | `fitMapToRoute`, `fitMapToRoutes` | Turf bbox → fitBounds |
 | `heatmap.ts` | `routesToHeatmapPoints` | Sample routes → weighted points |
 | `stats.ts` | `computeRouteStats` | Aggregates for StatsPanel |
-| `routeDate.ts` | grouping, filtering, date extraction | Activity dates |
+| `routeDate.ts` | grouping, filtering, dates, Health dedup keys | Activity dates + duplicates |
 | `geocode.ts` | `searchPlaces`, `reverseGeocode`, `resolveRoutePlaceName` | Nominatim API |
 | `geolocation.ts` | permission, wake lock helpers | Browser Geolocation API |
 | `editGeometry.ts` | `removeSpikePoints` | GPS spike removal |
@@ -88,18 +88,18 @@ Uses heatmap data internally. Cached by composite key.
 Sources (in order):
 1. `properties.createdAt` (valid ISO)
 2. `properties.time`
-3. `properties.coordinateProperties.times[0]`
-4. Regex `YYYY-MM-DD` in name
+3. `properties.coordinateProperties.times[0]` (в т.ч. вложенные массивы)
+4. Дата/время в имени: `YYYY-MM-DD_HH-MM-SS`, `YYYY-MM-DD h:mm am/pm`, иначе `YYYY-MM-DD` (полдень)
 
-### groupRoutes
+### Дедуп
 
-- `none`: flat list sorted by date
-- `month`: bucket `YYYY-MM`, label "Month Year"
-- `year`: bucket by year
+- `getRouteTimeKey` — минута activity time
+- `getRouteLooseDedupKey` — lowercase name + distance / 100 m
+- `findDuplicateRouteIds` — id всех, кроме первого совпадения по любому ключу
 
-### filterRoutesByDateRange
+### groupRoutes / filterRoutesByDateRange
 
-Uses HTML date inputs (`from`/`to`) with local midnight bounds.
+Без изменений: month/year/flat; HTML date inputs с локальной полуночью.
 
 ## geocode.ts
 
@@ -142,8 +142,8 @@ Classic GPS glitch: A → B_far → A_near → detects via haversine median step
 ## fitBounds.ts
 
 ```typescript
-fitMapToRoute(map, route, padding = 80)
-// maxZoom: 16, duration: 800ms
+fitMapToRoute(map, route, padding = 80)   // maxZoom 16
+fitMapToRoutes(map, routes, padding = 80) // maxZoom 14, FeatureCollection bbox
 ```
 
 ## Зависимости Turf

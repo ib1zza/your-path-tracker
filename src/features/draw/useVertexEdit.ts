@@ -29,10 +29,7 @@ function findNearestPointIndex(
 }
 
 /** Drag / select / delete vertices while editing a saved route. */
-export function useVertexEdit(
-  mapRef: React.RefObject<MapRef | null>,
-  mapLoaded: boolean,
-) {
+export function useVertexEdit(mapRef: React.RefObject<MapRef | null>, mapLoaded: boolean) {
   const mode = useDrawStore((state) => state.mode);
   const dragIndexRef = useRef<number | null>(null);
   const didDragRef = useRef(false);

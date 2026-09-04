@@ -1,10 +1,7 @@
 import { lineString, simplify } from '@turf/turf';
 import type { Position } from 'geojson';
 
-export function simplifyLine(
-  coordinates: Position[],
-  tolerance = 0.00005,
-): Position[] {
+export function simplifyLine(coordinates: Position[], tolerance = 0.00005): Position[] {
   if (coordinates.length < 3) {
     return coordinates;
   }

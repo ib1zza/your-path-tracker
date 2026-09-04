@@ -40,10 +40,7 @@ function clearMyLocationLayer(map: Map) {
   });
 }
 
-export function useMyLocationLayer(
-  mapRef: React.RefObject<MapRef | null>,
-  mapLoaded: boolean,
-) {
+export function useMyLocationLayer(mapRef: React.RefObject<MapRef | null>, mapLoaded: boolean) {
   const showMyLocation = useMapUiStore((state) => state.showMyLocation);
   const locationFollow = useMapUiStore((state) => state.locationFollow);
   const watchIdRef = useRef<number | null>(null);

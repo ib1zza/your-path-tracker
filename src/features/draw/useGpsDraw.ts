@@ -6,10 +6,7 @@ import { useDrawStore } from '../../stores/drawStore';
 const MIN_DISTANCE_DEG = 0.00002; // ~2m
 const MAX_ACCURACY_M = 55;
 
-export function useGpsDraw(
-  mapRef: React.RefObject<MapRef | null>,
-  mapLoaded: boolean,
-) {
+export function useGpsDraw(mapRef: React.RefObject<MapRef | null>, mapLoaded: boolean) {
   const mode = useDrawStore((state) => state.mode);
   const gpsPaused = useDrawStore((state) => state.gpsPaused);
   const gpsFollow = useDrawStore((state) => state.gpsFollow);

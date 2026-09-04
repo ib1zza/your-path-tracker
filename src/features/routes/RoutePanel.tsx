@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { exportAllRoutes, exportRoute, readRouteFiles, type ImportKind } from '../../lib/geo/exportImport';
+import {
+  exportAllRoutes,
+  exportRoute,
+  readRouteFiles,
+  type ImportKind,
+} from '../../lib/geo/exportImport';
 import {
   filterRoutesByDateRange,
   groupKeyForRoute,
@@ -370,7 +375,8 @@ export function RoutePanel() {
 
       {selectedId && !isLoading && (
         <p className="route-panel__message">
-          Focus mode: other routes hidden. Click empty map to show all, or press Path to edit points.
+          Focus mode: other routes hidden. Click empty map to show all, or press Path to edit
+          points.
         </p>
       )}
 
@@ -411,7 +417,9 @@ export function RoutePanel() {
                 <span className="route-group__label">{group.label}</span>
                 <span className="route-group__count">{group.routes.length}</span>
               </button>
-              {isOpen && <div className="route-group__body">{group.routes.map(renderRouteItem)}</div>}
+              {isOpen && (
+                <div className="route-group__body">{group.routes.map(renderRouteItem)}</div>
+              )}
             </section>
           );
         })}

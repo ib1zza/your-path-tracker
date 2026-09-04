@@ -4,11 +4,38 @@ export type RouteGroupBy = 'none' | 'month' | 'year';
 
 const NAME_DATE_RE = /(\d{4})-(\d{2})-(\d{2})/;
 const NAME_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[_T ](\d{2})-(\d{2})-(\d{2})/;
+const NAME_DATETIME_12H_RE = /(\d{4})-(\d{2})-(\d{2})[\s_T]+(\d{1,2}):(\d{2})\s*(am|pm)?/i;
 
 function roundToMinuteIso(date: Date): string {
   const copy = new Date(date);
   copy.setSeconds(0, 0);
   return copy.toISOString();
+}
+
+function parseHourMinute(
+  hour: string,
+  minute: string,
+  meridiem?: string,
+): { hour: number; minute: number } | undefined {
+  let h = Number.parseInt(hour, 10);
+  const m = Number.parseInt(minute, 10);
+  if (Number.isNaN(h) || Number.isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+    return undefined;
+  }
+
+  if (meridiem) {
+    const isPm = meridiem.toLowerCase() === 'pm';
+    if (h === 12) {
+      h = isPm ? 12 : 0;
+    } else if (isPm) {
+      h += 12;
+    }
+  } else if (h > 12) {
+    // Already 24-hour style in a 12-hour pattern (e.g. "Route 2024-07-17 22:20").
+    return { hour: h, minute: m };
+  }
+
+  return { hour: h, minute: m };
 }
 
 function extractTimeFromLabel(label: string | undefined): string | undefined {
@@ -22,6 +49,20 @@ function extractTimeFromLabel(label: string | undefined): string | undefined {
     const parsed = Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
     if (!Number.isNaN(parsed)) {
       return roundToMinuteIso(new Date(parsed));
+    }
+  }
+
+  const dateTime12Match = label.match(NAME_DATETIME_12H_RE);
+  if (dateTime12Match) {
+    const [, year, month, day, hour, minute, meridiem] = dateTime12Match;
+    const parts = parseHourMinute(hour, minute, meridiem);
+    if (parts) {
+      const hh = String(parts.hour).padStart(2, '0');
+      const mm = String(parts.minute).padStart(2, '0');
+      const parsed = Date.parse(`${year}-${month}-${day}T${hh}:${mm}:00`);
+      if (!Number.isNaN(parsed)) {
+        return roundToMinuteIso(new Date(parsed));
+      }
     }
   }
 
@@ -53,7 +94,10 @@ export function extractImportedCreatedAt(
   fallbackName?: string,
 ): string | undefined {
   if (properties) {
-    if (typeof properties.createdAt === 'string' && !Number.isNaN(Date.parse(properties.createdAt))) {
+    if (
+      typeof properties.createdAt === 'string' &&
+      !Number.isNaN(Date.parse(properties.createdAt))
+    ) {
       return new Date(properties.createdAt).toISOString();
     }
     if (typeof properties.time === 'string' && !Number.isNaN(Date.parse(properties.time))) {
@@ -88,17 +132,42 @@ export function getRouteActivityDate(route: RouteFeature): Date {
 
 /** Start-time key (minute precision) for Apple Health import dedup. */
 export function getRouteTimeKey(route: RouteFeature): string {
-  const fromName = extractTimeFromLabel(route.properties.name);
-  if (fromName) {
-    return fromName;
-  }
-
-  const parsed = Date.parse(route.properties.createdAt);
-  if (!Number.isNaN(parsed)) {
-    return roundToMinuteIso(new Date(parsed));
+  const activityTime = extractImportedCreatedAt(
+    route.properties as unknown as Record<string, unknown>,
+    route.properties.name,
+  );
+  if (activityTime) {
+    return roundToMinuteIso(new Date(activityTime));
   }
 
   return toDateInputValue(getRouteActivityDate(route));
+}
+
+/** Fallback dedup key for routes with the same label and distance. */
+export function getRouteLooseDedupKey(route: RouteFeature): string {
+  const name = route.properties.name.trim().toLowerCase().replace(/\s+/g, ' ');
+  const dist = Math.round((route.properties.distanceMeters ?? 0) / 100);
+  return `${name}|d${dist}`;
+}
+
+export function findDuplicateRouteIds(routes: RouteFeature[]): string[] {
+  const seen = new Map<string, RouteFeature>();
+  const duplicateIds: string[] = [];
+
+  for (const route of routes) {
+    const keys = [getRouteTimeKey(route), getRouteLooseDedupKey(route)];
+    const isDuplicate = keys.some((key) => seen.has(key));
+    if (isDuplicate) {
+      duplicateIds.push(route.properties.id);
+      continue;
+    }
+
+    for (const key of keys) {
+      seen.set(key, route);
+    }
+  }
+
+  return duplicateIds;
 }
 
 export function toDateInputValue(date: Date): string {
@@ -136,10 +205,7 @@ function monthLabel(date: Date, locale = undefined): string {
   return date.toLocaleDateString(locale, { month: 'long', year: 'numeric' });
 }
 
-export function groupRoutes(
-  routes: RouteFeature[],
-  groupBy: RouteGroupBy,
-): RouteGroup[] {
+export function groupRoutes(routes: RouteFeature[], groupBy: RouteGroupBy): RouteGroup[] {
   if (groupBy === 'none') {
     return [
       {

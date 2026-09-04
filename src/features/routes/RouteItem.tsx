@@ -84,7 +84,8 @@ function RouteItemComponent({
             <strong>{route.properties.name}</strong>
           )}
           <span className="route-item__meta">
-            {formatDistance(route.properties.distanceMeters)} · {formatDate(route.properties.createdAt)}
+            {formatDistance(route.properties.distanceMeters)} ·{' '}
+            {formatDate(route.properties.createdAt)}
             {route.properties.placeName ? ` · ${route.properties.placeName}` : ''}
             {route.properties.source === 'gps'
               ? ' · GPS'
@@ -150,7 +151,12 @@ function RouteItemComponent({
         <button type="button" className="btn btn--icon" title="Export" onClick={onExport}>
           Export
         </button>
-        <button type="button" className="btn btn--icon btn--danger" title="Delete" onClick={onDelete}>
+        <button
+          type="button"
+          className="btn btn--icon btn--danger"
+          title="Delete"
+          onClick={onDelete}
+        >
           Delete
         </button>
       </div>

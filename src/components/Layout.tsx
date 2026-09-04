@@ -18,7 +18,10 @@ export function Layout() {
         {isMapPage && <GpsStatusBadge />}
         <nav className="app-header__nav">
           <AuthButton />
-          <Link to="/" className={location.pathname === '/' ? 'nav-link nav-link--active' : 'nav-link'}>
+          <Link
+            to="/"
+            className={location.pathname === '/' ? 'nav-link nav-link--active' : 'nav-link'}
+          >
             Map
           </Link>
           <Link

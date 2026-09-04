@@ -1,6 +1,6 @@
 # Управление состоянием (Zustand)
 
-Два независимых store без middleware и persist plugins — persistence делается явно через Dexie.
+Четыре store без persist-middleware. Маршруты пишутся явно через `syncRoutes` (Dexie и при uid — Firestore). GPS draft — Dexie. UI карты (fit / my location) — только в памяти.
 
 ## routeStore
 
@@ -12,30 +12,46 @@
 |------|-----|----------|
 | `routes` | `RouteFeature[]` | Все маршруты, sorted by activity date desc |
 | `selectedId` | `string \| null` | Выбранный маршрут (focus mode) |
-| `hiddenIds` | `Set<string>` | Скрытые на карте (toggle visibility) |
-| `isLoading` | `boolean` | Загрузка из IndexedDB |
+| `hiddenIds` | `Set<string>` | Скрытые на карте |
+| `isLoading` | `boolean` | Загрузка / sync |
 | `heatmapEnabled` | `boolean` | Overlay heatmap |
-| `mapStyleId` | `MapStyleId` | `osm` \| `dark` \| `topo`, persisted in localStorage |
+
+Стиль карты и `mapStyleId` в store **нет**: 2D всегда OSM (`OSM_MAP_STYLE`).
 
 ### Actions
 
 | Action | Описание |
 |--------|----------|
-| `loadRoutes()` | DB → thinRoutes → date backfill → save changes → sort → deferred `ensurePlaceNames` |
-| `addRoute(route)` | thin → saveRoute → prepend to routes → geocode |
-| `updateRoute(route)` | saveRoute → map replace |
-| `deleteRoute(id)` | delete from DB + state, clear selection/hidden |
-| `selectRoute(id)` | Set selectedId |
-| `toggleVisibility(id)` | Toggle in hiddenIds |
-| `isVisible(id)` | `!hiddenIds.has(id)` |
-| `toggleHeatmap()` | Flip heatmapEnabled |
-| `setMapStyleId(id)` | localStorage + state |
-| `ensurePlaceNames()` | Reverse geocode routes without placeName (serialized, 1100ms gap) |
-| `importRoutes(files, overwrite, kind?)` | Parse → dedupe by id → save → reload |
+| `loadRoutes()` | `loadRoutesForCurrentUser` → thin → date backfill → persist changes → sort → deferred `ensurePlaceNames` |
+| `addRoute(route)` | thin → `persistRoute` → prepend → geocode |
+| `updateRoute(route)` | `persistRoute` → replace in state |
+| `deleteRoute(id)` | `removeRoute` + clear selection/hidden |
+| `selectRoute` / `toggleVisibility` / `isVisible` / `toggleHeatmap` | UI-only |
+| `ensurePlaceNames()` | Reverse geocode без placeName (1100 ms gap), затем `persistRoutes` |
+| `importRoutes` / `applyImportedRoutes` | Parse → skip/overwrite по id; Health ещё по start time → `persistRoutes` → `loadRoutes` |
+| `applyRoutes(routes)` | Только Zustand (после cloud sync, без повторной записи) |
+| `removeDuplicateRoutes()` | `findDuplicateRouteIds` → `removeRoute` для каждого |
 
 ### Singleton guard
 
-`placeNamesInFlight` — предотвращает параллельные вызовы `ensurePlaceNames`.
+`placeNamesInFlight` — один проход `ensurePlaceNames` за раз.
+
+## authStore
+
+**Файл:** `src/stores/authStore.ts`
+
+Сессия Google, флаги sync, `init` / `signIn` / `signOut` / `syncNow`. После успешного sync вызывает `routeStore.applyRoutes`. Если Firebase не настроен, `init` сразу грузит маршруты из Dexie. Подробности: [firebase-sync.md](./firebase-sync.md).
+
+## mapUiStore
+
+**Файл:** `src/stores/mapUiStore.ts`
+
+| Поле / action | Описание |
+|---------------|----------|
+| `fitAllNonce` | Инкремент → MapView делает `fitMapToRoutes` по видимым (не hidden) маршрутам |
+| `requestFitAllRoutes()` | Кнопка «Show all» в RoutePanel |
+| `showMyLocation` / `toggleMyLocation` | Синяя точка, независимо от GPS-записи |
+| `locationFollow` / `toggleLocationFollow` | Карта следует за точкой (сбрасывается при выключении location) |
 
 ## drawStore
 
@@ -52,17 +68,17 @@ type DrawMode = 'none' | 'click' | 'freehand' | 'gps' | 'edit';
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `mode` | `DrawMode` | Текущий режим |
-| `points` | `Position[]` | Точки текущего рисунка / редактирования |
-| `isFreehandActive` | `boolean` | Идёт ли drag в freehand |
-| `editingRouteId` | `string \| null` | ID маршрута в edit mode |
-| `selectedPointIndex` | `number \| null` | Выбранная вершина в edit |
-| `gpsWatchId` | `number \| null` | navigator.geolocation watch ID |
-| `gpsError` | `string \| null` | Сообщение об ошибке GPS |
+| `points` | `Position[]` | Точки рисунка / редактирования |
+| `isFreehandActive` | `boolean` | Drag в freehand |
+| `editingRouteId` | `string \| null` | Маршрут в edit mode |
+| `selectedPointIndex` | `number \| null` | Вершина в edit |
+| `gpsWatchId` | `number \| null` | geolocation watch ID |
+| `gpsError` | `string \| null` | Ошибка GPS |
 | `gpsPermission` | `GeoPermissionState` | granted/prompt/denied/... |
 | `gpsPaused` | `boolean` | GPS на паузе |
-| `gpsFollow` | `boolean` | Карта следует за позицией |
+| `gpsFollow` | `boolean` | Карта следует за записью GPS |
 | `gpsAccuracy` | `number \| null` | meters |
-| `gpsStartedAt` | `string \| null` | ISO timestamp начала сессии |
+| `gpsStartedAt` | `string \| null` | ISO начала сессии |
 | `gpsWakeLock` | `WakeLockSentinel \| null` | Screen wake lock |
 
 ### Ключевые actions
@@ -71,46 +87,52 @@ type DrawMode = 'none' | 'click' | 'freehand' | 'gps' | 'edit';
 |--------|-----------|
 | `setMode(mode)` | Stop GPS watch, release wake lock, clear draft if leaving gps, reset points |
 | `startEdit(routeId, points)` | mode=edit, copy coordinates |
-| `startGpsRecording()` | Permission check → wake lock → save empty draft → mode=gps |
+| `startGpsRecording()` | Permission → wake lock → empty draft → mode=gps |
 | `resumeGpsDraft()` | Load draft from DB → mode=gps |
-| `pauseGps()` | clearWatch, release wake lock, persist draft |
-| `resumeGps()` | gpsPaused=false, re-request wake lock |
+| `pauseGps` / `resumeGps` | watch + wake lock + persist draft |
 | `addPoint` / `updatePoint` / `removePointAt` | Манипуляция points |
-| `cleanGpsSpikes()` | `removeSpikePoints` from editGeometry |
-| `persistGpsDraft()` | Debounced save to IndexedDB (from useGpsDraw) |
-| `clearGpsSession()` | Stop watch, clear draft |
-| `cancel()` | Full reset to mode=none |
-| `reset()` | Clear points only (keep mode) |
+| `cleanGpsSpikes()` | `removeSpikePoints` |
+| `persistGpsDraft()` | Debounced Dexie (из useGpsDraw) |
+| `clearGpsSession()` / `cancel()` / `reset()` | Очистка сессии / полный сброс / только points |
 
 ### Side effects при смене mode
 
-Leaving `gps` mode → `clearGpsDraft()` unless explicitly saved via MapView save flow.
+Уход с `gps` → `clearGpsDraft()`, если не сохранили через MapView.
 
 ## Взаимодействие stores
 
 ```
+App
+  └─ authStore.init → sync / loadRoutes → routeStore
+
 MapView
   ├─ drawStore (preview, mode)
-  └─ routeStore (saved routes, selection)
+  ├─ routeStore (saved routes, selection)
+  └─ mapUiStore (fit all, my location)
 
 RoutePanel
   ├─ routeStore (list, CRUD, import)
-  └─ drawStore.startEdit (edit button)
+  ├─ mapUiStore.requestFitAllRoutes
+  └─ drawStore.startEdit
+
+AuthButton
+  ├─ authStore (sign in/out, syncNow)
+  └─ routeStore.removeDuplicateRoutes
 
 save flow (MapView.handleSaveRoute):
-  drawStore.points → RouteFeature → routeStore.addRoute → drawStore.reset/setMode('none')
+  drawStore.points → RouteFeature → routeStore.addRoute → drawStore.reset
 ```
 
 ## Подписки в компонентах
 
-Используйте селекторы для минимизации re-renders:
+Селекторы:
 
 ```typescript
 const routes = useRouteStore((state) => state.routes);
 const mode = useDrawStore((state) => state.mode);
 ```
 
-Для imperative access в callbacks:
+Imperative в callbacks:
 
 ```typescript
 useDrawStore.getState().points
@@ -121,5 +143,6 @@ useRouteStore.getState().routes
 
 - Map instance / mapLoaded — local state в MapView/GlobePage
 - Save dialog open/name/notes — local state в MapView
-- Import menu open — local state в RoutePanel
+- Import / search / date filters — local state в RoutePanel
 - Place search results — local state в PlaceSearch
+- Settings menu — local state в AuthButton

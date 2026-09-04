@@ -6,9 +6,7 @@ function haversineMeters(a: Position, b: Position): number {
   const lat2 = toRad(b[1]);
   const dLat = lat2 - lat1;
   const dLng = toRad(b[0] - a[0]);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
   return 2 * 6_371_000 * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
@@ -52,9 +50,7 @@ export function removeSpikePoints(
     const dSkip = haversineMeters(prev, next);
 
     const isSpike =
-      dPrev >= jumpThreshold &&
-      dNext >= jumpThreshold &&
-      dSkip < Math.min(dPrev, dNext) * 0.55;
+      dPrev >= jumpThreshold && dNext >= jumpThreshold && dSkip < Math.min(dPrev, dNext) * 0.55;
 
     if (isSpike) {
       keep[i] = false;

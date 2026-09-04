@@ -12,7 +12,7 @@ app-shell
 │   ├── brand link → /
 │   ├── DrawToolbar (map only)
 │   ├── GpsStatusBadge (map only)
-│   └── nav: Map | Globe
+│   └── nav: AuthButton | Map | Globe
 ├── GpsResumePrompt (map only)
 └── app-body
     ├── RoutePanel (map only, aside)
@@ -39,16 +39,17 @@ Thin wrapper: `<MapView />`
 |-----------|----------|--------------|
 | `MapView` | `map-view` | Main map orchestrator |
 | `MapControls` | `map-controls` | `{ onFinish }` |
-| `DrawToolbar` | `draw-toolbar` | Mode + heatmap + style |
+| `DrawToolbar` | `draw-toolbar` | Mode + heatmap + my location / follow |
 | `GpsStatusBadge` | `gps-badge` | Header GPS indicator |
 | `GpsResumePrompt` | `gps-resume` | Draft recovery banner |
 | `PlaceSearch` | `place-search` | `{ onSelect }` |
+| `AuthButton` | `auth-control` | Google sign-in, Settings, sync |
 
 ### MapView sub-areas
 
-- `map-view__search` — top overlay for PlaceSearch
-- `modal-backdrop` / `modal` — save route dialog
-- `heatmap-legend` — when heatmap on
+- `map-view__search` — PlaceSearch
+- `modal-backdrop` / `modal` — save dialog
+- `heatmap-legend` — heatmap on
 
 ## Routes features
 
@@ -60,23 +61,25 @@ Thin wrapper: `<MapView />`
 
 ### RoutePanel sections
 
-- Header + count
+- Header + count (filtered/total)
 - StatsPanel
-- Toolbar: Import menu, Export all
-- Filters: group by month/year/flat, date range
+- Toolbar: Import, **Show all**, Export all
+- Search (debounce 250ms, name + placeName, clear)
+- Filters: group month/year/flat, date range
 - Focus mode message
 - Import result message
-- Scrollable grouped list
+- Scrollable grouped list (scroll to selected)
 
 ### RouteItem actions
 
 - Click row → select
-- Eye toggle → visibility
-- Rename (inline input)
-- Notes textarea
+- Eye → visibility
+- Rename (inline)
+- Notes
+- **Color swatches** (`ROUTE_COLORS`) → `updateRoute` color
 - Path → startEdit
-- Export → exportRoute
-- Delete → confirm + deleteRoute
+- Export
+- Delete → confirm
 
 ## Shared UI patterns
 
@@ -129,6 +132,13 @@ Located in `features/draw/`:
 Located in `features/map/`:
 
 - `useRoutesLayer`, `useHeatmapLayer`, `useDrawPreviewLayer`, `useFitRouteOnSelect` — `useMapLayers.ts`
+- `useMyLocationLayer` — `useMyLocation.ts`
+
+## Auth UI
+
+`features/auth/AuthButton.tsx` — скрыт, если Firebase не настроен. Settings: Sync now (signed-in), Sign out, Delete duplicates.
+
+Классы: `auth-control`, `auth-status`, `auth-error`, `auth-btn--google`; меню — `import-menu` / `settings-menu__list`.
 
 ## Accessibility notes
 

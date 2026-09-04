@@ -21,7 +21,7 @@ Single-feature collection:
 {sanitized-name}.geojson
 ```
 
-Sanitization: `name.replace(/[^\w\-]+/g, '-').toLowerCase()`
+Sanitization: `name.replace(/[^\w-]+/g, '-').toLowerCase()`
 
 Both use client-side Blob download (no server).
 
@@ -32,11 +32,13 @@ Both use client-side Blob download (no server).
 ```typescript
 routeStore.importRoutes(files, overwrite, kind?)
   → readRouteFiles(list, existingCount, kind)
-  → thinRoutes → saveRoutes → loadRoutes()
+  → applyImportedRoutes
+  → persistRoutes → loadRoutes()
 ```
 
-- **overwrite=false** + duplicate `properties.id` → skipped
+- **overwrite=false** + тот же `properties.id` → skipped
 - **overwrite=true** → replaces existing id
+- **Apple Health** (`parsed.appleHealth`): дополнительно match по `getRouteTimeKey` (время старта, минута). Без overwrite — skip; с overwrite — импорт получает id уже существующего маршрута.
 
 ### ImportKind
 
@@ -113,19 +115,25 @@ Validates Feature or FeatureCollection with LineString geometry.
 ## UI import flow
 
 ```
-RoutePanel → Import button → menu
-  → sets pendingKindRef + file input accept/multiple
-  → user picks files
-  → confirm overwrite dialog
-  → importRoutes → message "Imported N, skipped M"
+RoutePanel → Import → menu
+  → pendingKindRef + file input
+  → confirm:
+      Health: «matched by start time…»
+      иначе: overwrite by id
+  → applyImportedRoutes → "Imported N, skipped M"
 ```
+
+Settings → **Delete duplicates** вызывает `removeDuplicateRoutes` (время старта **или** имя+дистанция). Оставляет первый экземпляр, удаляет остальные.
 
 ## Apple Health workflow
 
-1. Export data from Health app (ZIP)
-2. Import → "Apple Health" (single .zip)
-3. Parser looks for paths matching `/workout-routes/i`
-4. GPX filenames often contain `YYYY-MM-DD` → activity date backfill on load
+1. Export из Health (ZIP)
+2. Import → Apple Health или Auto-detect ZIP
+3. Пути `/workout-routes/i`
+4. Имена GPX часто с датой и временем → `extractImportedCreatedAt` / `getRouteTimeKey`
+5. Повторный импорт того же workout не плодит копии, если start time совпадает
+
+`readRouteFiles` возвращает `{ routes, appleHealth }`. `appleHealth` true, если kind=`health` или auto нашёл Health GPX в ZIP.
 
 ## Error handling
 

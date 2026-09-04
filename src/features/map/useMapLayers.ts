@@ -76,12 +76,7 @@ function syncRoutesGeometry(map: Map, routes: RouteFeature[]) {
       },
       paint: {
         'line-color': '#ffffff',
-        'line-width': [
-          'case',
-          ['boolean', ['feature-state', 'selected'], false],
-          9,
-          7,
-        ],
+        'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 9, 7],
         'line-opacity': 1,
       },
     });
@@ -98,12 +93,7 @@ function syncRoutesGeometry(map: Map, routes: RouteFeature[]) {
       },
       paint: {
         'line-color': ['get', 'color'],
-        'line-width': [
-          'case',
-          ['boolean', ['feature-state', 'selected'], false],
-          6,
-          4,
-        ],
+        'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 6, 4],
         'line-opacity': 1,
       },
     });
@@ -130,7 +120,11 @@ function syncRoutesGeometry(map: Map, routes: RouteFeature[]) {
   moveDrawLayersToTop(map);
 }
 
-function syncRouteSelection(map: Map, selectedId: string | null, previousSelectedId: string | null) {
+function syncRouteSelection(
+  map: Map,
+  selectedId: string | null,
+  previousSelectedId: string | null,
+) {
   if (!map.getSource(ROUTES_SOURCE_ID)) {
     return;
   }
@@ -189,14 +183,7 @@ export function useRoutesLayer(
       map.setPaintProperty(
         ROUTES_LINE_LAYER_ID,
         'line-width',
-        heatmapEnabled
-          ? 2
-          : [
-              'case',
-              ['boolean', ['feature-state', 'selected'], false],
-              6,
-              4,
-            ],
+        heatmapEnabled ? 2 : ['case', ['boolean', ['feature-state', 'selected'], false], 6, 4],
       );
     }
     if (map.getLayer(ROUTES_OUTLINE_LAYER_ID)) {
@@ -466,9 +453,7 @@ export function useFitRouteOnSelect(
     }
 
     const map = mapRef.current?.getMap();
-    const route = useRouteStore
-      .getState()
-      .routes.find((item) => item.properties.id === selectedId);
+    const route = useRouteStore.getState().routes.find((item) => item.properties.id === selectedId);
     if (!map || !route) {
       return;
     }

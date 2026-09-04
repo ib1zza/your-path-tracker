@@ -1,6 +1,6 @@
 # P0 — Quick wins
 
-Small changes with clear UX payoff. Target: 1–2 days total.
+Small UX items. **All five items below shipped** (search, fit all, Sync now, my location, color picker). Keep this file as the original spec.
 
 ## 1. Search routes by name
 

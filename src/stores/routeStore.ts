@@ -1,9 +1,23 @@
 import { create } from 'zustand';
-import { persistRoute, persistRoutes, removeRoute, loadRoutesForCurrentUser } from '../lib/firebase/syncRoutes';
-import { readRouteFiles, type ImportKind, type ReadRouteFilesResult } from '../lib/geo/exportImport';
+import {
+  persistRoute,
+  persistRoutes,
+  removeRoute,
+  loadRoutesForCurrentUser,
+} from '../lib/firebase/syncRoutes';
+import {
+  readRouteFiles,
+  type ImportKind,
+  type ReadRouteFilesResult,
+} from '../lib/geo/exportImport';
 import { resolveRoutePlaceName } from '../lib/geo/geocode';
 import { routeCentroid } from '../lib/geo/globe';
-import { extractImportedCreatedAt, getRouteActivityDate, getRouteTimeKey } from '../lib/geo/routeDate';
+import {
+  extractImportedCreatedAt,
+  findDuplicateRouteIds,
+  getRouteActivityDate,
+  getRouteTimeKey,
+} from '../lib/geo/routeDate';
 import { thinRoutes } from '../lib/geo/routeGeometry';
 import type { RouteFeature } from '../types/route';
 
@@ -32,6 +46,7 @@ interface RouteState {
     overwrite: boolean,
   ) => Promise<{ imported: number; skipped: number }>;
   applyRoutes: (routes: RouteFeature[]) => void;
+  removeDuplicateRoutes: () => Promise<{ removed: number }>;
 }
 
 const PLACE_NAME_GAP_MS = 1100;
@@ -67,10 +82,7 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       const current = Date.parse(route.properties.createdAt);
       const inferredTime = Date.parse(inferred);
       // If name encodes a date far from createdAt, prefer the name date.
-      if (
-        Number.isNaN(current) ||
-        Math.abs(current - inferredTime) > 1000 * 60 * 60 * 36
-      ) {
+      if (Number.isNaN(current) || Math.abs(current - inferredTime) > 1000 * 60 * 60 * 36) {
         const updated: RouteFeature = {
           ...route,
           properties: {
@@ -277,5 +289,33 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
 
     return { imported: toSave.length, skipped };
+  },
+
+  removeDuplicateRoutes: async () => {
+    const routes = get().routes;
+    const duplicateIds = findDuplicateRouteIds(routes);
+    if (duplicateIds.length === 0) {
+      return { removed: 0 };
+    }
+
+    for (const id of duplicateIds) {
+      await removeRoute(id);
+    }
+
+    set((state) => {
+      const duplicateSet = new Set(duplicateIds);
+      const hiddenIds = new Set(state.hiddenIds);
+      for (const id of duplicateIds) {
+        hiddenIds.delete(id);
+      }
+      return {
+        routes: state.routes.filter((route) => !duplicateSet.has(route.properties.id)),
+        selectedId:
+          state.selectedId && duplicateSet.has(state.selectedId) ? null : state.selectedId,
+        hiddenIds,
+      };
+    });
+
+    return { removed: duplicateIds.length };
   },
 }));

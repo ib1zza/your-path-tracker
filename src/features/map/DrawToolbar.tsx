@@ -112,7 +112,9 @@ export function GpsStatusBadge() {
     <div className={`gps-badge ${gpsPaused ? 'gps-badge--paused' : ''}`}>
       <span className="gps-badge__dot" />
       {gpsPaused ? 'Paused' : 'Recording'} · {points.length} pts · {distance}
-      {gpsAccuracy != null && Number.isFinite(gpsAccuracy) ? ` · ±${Math.round(gpsAccuracy)} m` : ''}
+      {gpsAccuracy != null && Number.isFinite(gpsAccuracy)
+        ? ` · ±${Math.round(gpsAccuracy)} m`
+        : ''}
     </div>
   );
 }

@@ -17,10 +17,14 @@ When signed in, **Firebase Firestore is the source of truth**. IndexedDB (Dexie)
 
 - Draw routes: click, freehand, GPS
 - Edit geometry, clean GPS spikes
-- Import GPX / GeoJSON / KML / TCX / Apple Health ZIP
+- Import GPX / GeoJSON / KML / TCX / Apple Health ZIP (Health dedup by start time)
 - Export routes
-- List with month/year grouping and date filters
+- List with search, month/year grouping, date filters, Show all
+- Route color picker
+- My location + follow (independent of GPS recording)
 - Heatmap and Globe view
 - Stats panel (distance, revisits)
 - Place search and geocoded place names
-- Google Sign-In + Firestore sync
+- Google Sign-In + Firestore sync + Sync now
+- Delete duplicates (start time or name+distance)
+- Yarn 4, Prettier, oxlint, Makefile (`make check`)

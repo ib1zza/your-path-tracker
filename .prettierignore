@@ -1,0 +1,10 @@
+dist
+node_modules
+.yarn
+yarn.lock
+coverage
+*.min.js
+*.min.css
+docs
+plans
+*.md
