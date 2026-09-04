@@ -83,17 +83,21 @@ export function RoutePanel() {
   const [importOpen, setImportOpen] = useState(false);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [groupBy, setGroupBy] = useState<RouteGroupBy>('month');
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectMode, setSelectMode] = useState(false);
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const requestFitAllRoutes = useMapUiStore((state) => state.requestFitAllRoutes);
+  const selectedTags = useMapUiStore((state) => state.filterTags);
+  const setFilterTags = useMapUiStore((state) => state.setFilterTags);
+  const toggleFilterTag = useMapUiStore((state) => state.toggleFilterTag);
+  const dateFrom = useMapUiStore((state) => state.dateFrom);
+  const dateTo = useMapUiStore((state) => state.dateTo);
+  const setDateFrom = useMapUiStore((state) => state.setDateFrom);
+  const setDateTo = useMapUiStore((state) => state.setDateTo);
 
   const routes = useRouteStore((state) => state.routes);
   const selectedId = useRouteStore((state) => state.selectedId);
@@ -213,7 +217,7 @@ export function RoutePanel() {
   const clearFilters = () => {
     setDateFrom('');
     setDateTo('');
-    setSelectedTags([]);
+    setFilterTags([]);
     setSearchQuery('');
   };
 
@@ -476,13 +480,7 @@ export function RoutePanel() {
                   key={tag}
                   type="button"
                   className={`tag-chip ${selectedTags.includes(tag) ? 'tag-chip--active' : ''}`}
-                  onClick={() =>
-                    setSelectedTags((current) =>
-                      current.includes(tag)
-                        ? current.filter((item) => item !== tag)
-                        : [...current, tag],
-                    )
-                  }
+                  onClick={() => toggleFilterTag(tag)}
                 >
                   {tag}
                 </button>

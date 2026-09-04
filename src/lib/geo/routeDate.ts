@@ -384,6 +384,21 @@ export function toDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+export function routeMatchesDateRange(
+  route: RouteFeature,
+  from: string | null,
+  to: string | null,
+): boolean {
+  if (!from && !to) {
+    return true;
+  }
+
+  const fromTime = from ? Date.parse(`${from}T00:00:00`) : Number.NEGATIVE_INFINITY;
+  const toTime = to ? Date.parse(`${to}T23:59:59.999`) : Number.POSITIVE_INFINITY;
+  const time = getRouteActivityDate(route).getTime();
+  return time >= fromTime && time <= toTime;
+}
+
 export function filterRoutesByDateRange(
   routes: RouteFeature[],
   from: string | null,
@@ -393,13 +408,7 @@ export function filterRoutesByDateRange(
     return routes;
   }
 
-  const fromTime = from ? Date.parse(`${from}T00:00:00`) : Number.NEGATIVE_INFINITY;
-  const toTime = to ? Date.parse(`${to}T23:59:59.999`) : Number.POSITIVE_INFINITY;
-
-  return routes.filter((route) => {
-    const time = getRouteActivityDate(route).getTime();
-    return time >= fromTime && time <= toTime;
-  });
+  return routes.filter((route) => routeMatchesDateRange(route, from, to));
 }
 
 export interface RouteGroup {

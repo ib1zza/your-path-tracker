@@ -16,7 +16,7 @@ import {
   useRoutesLayer,
 } from '../features/map/useMapLayers';
 import { useMyLocationLayer } from '../features/map/useMyLocation';
-import { useMapUiStore } from '../stores/mapUiStore';
+import { routeMatchesMapFilters, useMapUiStore } from '../stores/mapUiStore';
 import { useRouteStore } from '../stores/routeStore';
 import type { RouteFeature } from '../types/route';
 
@@ -60,6 +60,9 @@ export function GlobePage() {
   const selectRoute = useRouteStore((state) => state.selectRoute);
   const ensurePlaceNames = useRouteStore((state) => state.ensurePlaceNames);
   const fitAllNonce = useMapUiStore((state) => state.fitAllNonce);
+  const filterTags = useMapUiStore((state) => state.filterTags);
+  const dateFrom = useMapUiStore((state) => state.dateFrom);
+  const dateTo = useMapUiStore((state) => state.dateTo);
   const globeStyleId = useMapUiStore((state) => state.globeStyleId);
   const globeStyle = useMemo(() => getBasemapStyle(globeStyleId, true), [globeStyleId]);
 
@@ -68,11 +71,12 @@ export function GlobePage() {
   const visibleRoutes = useMemo(() => {
     return routes.filter((route) => {
       if (hiddenIds.has(route.properties.id)) return false;
+      if (!routeMatchesMapFilters(route, filterTags, dateFrom, dateTo)) return false;
       if (selectedId && route.properties.id !== selectedId) return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometryKey, hiddenIds, selectedId]);
+  }, [dateFrom, dateTo, filterTags, geometryKey, hiddenIds, selectedId]);
 
   const pins = useMemo(() => placePins(visibleRoutes), [visibleRoutes]);
 
@@ -132,9 +136,13 @@ export function GlobePage() {
       return;
     }
 
-    const routesToFit = routes.filter((route) => !hiddenIds.has(route.properties.id));
+    const routesToFit = routes.filter(
+      (route) =>
+        !hiddenIds.has(route.properties.id) &&
+        routeMatchesMapFilters(route, filterTags, dateFrom, dateTo),
+    );
     fitMapToRoutes(map, routesToFit);
-  }, [fitAllNonce, hiddenIds, mapLoaded, routes]);
+  }, [dateFrom, dateTo, filterTags, fitAllNonce, hiddenIds, mapLoaded, routes]);
 
   const flyToPlace = (place: string) => {
     const placeRoutes = visibleRoutes.filter(

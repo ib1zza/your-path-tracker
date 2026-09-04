@@ -9,7 +9,7 @@ import { routeCentroid } from '../../lib/geo/globe';
 import { routesGeometryKey } from '../../lib/geo/routeGeometry';
 import { simplifyLine } from '../../lib/geo/simplify';
 import { useDrawStore } from '../../stores/drawStore';
-import { useMapUiStore } from '../../stores/mapUiStore';
+import { routeMatchesMapFilters, useMapUiStore } from '../../stores/mapUiStore';
 import { useRouteStore } from '../../stores/routeStore';
 import { pickRouteColor } from '../../types/route';
 import { useDrawKeyboard, useFreehandDraw } from '../draw/useDrawHandlers';
@@ -66,6 +66,9 @@ export function MapView() {
   const clearGpsSession = useDrawStore((state) => state.clearGpsSession);
 
   const fitAllNonce = useMapUiStore((state) => state.fitAllNonce);
+  const filterTags = useMapUiStore((state) => state.filterTags);
+  const dateFrom = useMapUiStore((state) => state.dateFrom);
+  const dateTo = useMapUiStore((state) => state.dateTo);
   const mapStyleId = useMapUiStore((state) => state.mapStyleId);
   const mapStyle = useMemo(() => getBasemapStyle(mapStyleId), [mapStyleId]);
 
@@ -74,6 +77,7 @@ export function MapView() {
   const visibleRoutes = useMemo(() => {
     return routes.filter((route) => {
       if (hiddenIds.has(route.properties.id)) return false;
+      if (!routeMatchesMapFilters(route, filterTags, dateFrom, dateTo)) return false;
       // While editing, the live preview replaces the saved geometry.
       if (editingRouteId && route.properties.id === editingRouteId) return false;
       // Focus selected route: temporarily hide the rest.
@@ -81,7 +85,7 @@ export function MapView() {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingRouteId, geometryKey, hiddenIds, selectedId]);
+  }, [dateFrom, dateTo, editingRouteId, filterTags, geometryKey, hiddenIds, selectedId]);
 
   const drawPoints = useMemo(
     () => points.map((point) => [point[0], point[1]] as [number, number]),
@@ -104,9 +108,13 @@ export function MapView() {
       return;
     }
 
-    const routesToFit = routes.filter((route) => !hiddenIds.has(route.properties.id));
+    const routesToFit = routes.filter(
+      (route) =>
+        !hiddenIds.has(route.properties.id) &&
+        routeMatchesMapFilters(route, filterTags, dateFrom, dateTo),
+    );
     fitMapToRoutes(map, routesToFit);
-  }, [fitAllNonce, hiddenIds, mapLoaded, routes]);
+  }, [dateFrom, dateTo, filterTags, fitAllNonce, hiddenIds, mapLoaded, routes]);
 
   const openSaveDialog = useCallback(() => {
     const state = useDrawStore.getState();
