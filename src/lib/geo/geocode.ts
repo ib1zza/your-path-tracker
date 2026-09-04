@@ -109,11 +109,16 @@ export async function reverseGeocode(
 
 const placeCache = new Map<string, string>();
 
+/** ~1.1 km cell — enough to share one reverse lookup across nearby routes. */
+export function placeCellKey(longitude: number, latitude: number): string {
+  return `${longitude.toFixed(2)},${latitude.toFixed(2)}`;
+}
+
 export async function resolveRoutePlaceName(
   longitude: number,
   latitude: number,
 ): Promise<string | undefined> {
-  const key = `${longitude.toFixed(2)},${latitude.toFixed(2)}`;
+  const key = placeCellKey(longitude, latitude);
   const cached = placeCache.get(key);
   if (cached) {
     return cached;
@@ -126,4 +131,9 @@ export async function resolveRoutePlaceName(
 
   placeCache.set(key, result.placeName);
   return result.placeName;
+}
+
+/** Seed cache without a network call (e.g. after loading routes that already have placeName). */
+export function rememberPlaceName(longitude: number, latitude: number, placeName: string): void {
+  placeCache.set(placeCellKey(longitude, latitude), placeName);
 }

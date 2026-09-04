@@ -14,7 +14,7 @@ Linker: `node-modules` (`.yarnrc.yml`), не PnP.
 
 ```bash
 yarn install
-yarn dev           # Vite, обычно http://localhost:5173
+yarn dev           # Vite, http://localhost:5555
 yarn build         # tsc -b && vite build
 yarn preview       # preview production build
 yarn lint          # oxlint

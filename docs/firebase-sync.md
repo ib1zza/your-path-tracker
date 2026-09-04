@@ -75,6 +75,7 @@ CRUD больше не ходит в Dexie напрямую. Обёртки в `
 |-------|-------|-----------|
 | `persistRoute` | `saveRoute` (Dexie) | Firestore merge + Dexie |
 | `persistRoutes` | `saveRoutes` | overlay на cloud snapshot + replace Dexie |
+| `replacePersistedRoutes` | `replaceAllRoutes` | одна запись полного массива в Firestore + Dexie |
 | `removeRoute` | `deleteRoute` | delete in cloud + Dexie |
 
 `replaceAllRoutes` в Dexie — полная замена таблицы `routes` (нужна для cloud overlay).

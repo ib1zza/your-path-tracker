@@ -1,7 +1,6 @@
 import { create } from 'zustand';
 import {
   persistRoute,
-  persistRoutes,
   replacePersistedRoutes,
   removeRoute,
   loadRoutesForCurrentUser,
@@ -11,13 +10,15 @@ import {
   type ImportKind,
   type ReadRouteFilesResult,
 } from '../lib/geo/exportImport';
-import { resolveRoutePlaceName } from '../lib/geo/geocode';
+import { placeCellKey, rememberPlaceName, resolveRoutePlaceName } from '../lib/geo/geocode';
 import { routeCentroid } from '../lib/geo/globe';
 import {
+  dedupeRoutes,
   extractImportedCreatedAt,
-  findDuplicateRouteIds,
+  findMatchingRoute,
   getRouteActivityDate,
-  getRouteTimeKey,
+  getRouteDedupKeys,
+  indexRoutesForDedup,
 } from '../lib/geo/routeDate';
 import { thinRoutes } from '../lib/geo/routeGeometry';
 import type { RouteFeature } from '../types/route';
@@ -59,6 +60,22 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+function sortByActivity(routes: RouteFeature[]): RouteFeature[] {
+  return [...routes].sort(
+    (a, b) => getRouteActivityDate(b).getTime() - getRouteActivityDate(a).getTime(),
+  );
+}
+
+function seedPlaceCache(routes: RouteFeature[]): void {
+  for (const route of routes) {
+    const placeName = route.properties.placeName;
+    if (!placeName) continue;
+    const center = routeCentroid(route);
+    if (!center) continue;
+    rememberPlaceName(center[0], center[1], placeName);
+  }
 }
 
 export const useRouteStore = create<RouteState>((set, get) => ({
@@ -103,17 +120,16 @@ export const useRouteStore = create<RouteState>((set, get) => ({
       changedMap.set(route.properties.id, route);
     }
     const changed = [...changedMap.values()];
+
+    const routes = sortByActivity(withDates);
+
+    // One snapshot write if thinning/date backfill mutated anything.
     if (changed.length > 0) {
-      await persistRoutes(changed);
+      await replacePersistedRoutes(routes);
     }
 
-    // Newest activity first.
-    const routes = [...withDates].sort(
-      (a, b) => getRouteActivityDate(b).getTime() - getRouteActivityDate(a).getTime(),
-    );
-
+    seedPlaceCache(routes);
     set({ routes, isLoading: false });
-    // Defer geocoding so the UI stays interactive after load/import.
     window.setTimeout(() => {
       void get().ensurePlaceNames();
     }, 0);
@@ -173,47 +189,85 @@ export const useRouteStore = create<RouteState>((set, get) => ({
     }
 
     placeNamesInFlight = (async () => {
-      const missing = get().routes.filter((route) => !route.properties.placeName);
+      const current = get().routes;
+      const missing = current.filter((route) => !route.properties.placeName);
       if (missing.length === 0) {
         return;
       }
 
-      const updates = new Map<string, RouteFeature>();
+      // Cluster by ~1 km cell so nearby routes share one Nominatim call.
+      const cellToRouteIds = new Map<string, string[]>();
+      const cellSample = new Map<string, { lng: number; lat: number }>();
 
-      for (let index = 0; index < missing.length; index += 1) {
-        const route = missing[index];
+      for (const route of missing) {
         const center = routeCentroid(route);
         if (!center) continue;
+        const key = placeCellKey(center[0], center[1]);
+        const list = cellToRouteIds.get(key);
+        if (list) {
+          list.push(route.properties.id);
+        } else {
+          cellToRouteIds.set(key, [route.properties.id]);
+          cellSample.set(key, { lng: center[0], lat: center[1] });
+        }
+      }
+
+      if (cellToRouteIds.size === 0) {
+        return;
+      }
+
+      const cellPlaceNames = new Map<string, string>();
+      const cells = [...cellToRouteIds.keys()];
+
+      for (let index = 0; index < cells.length; index += 1) {
+        const key = cells[index];
+        const sample = cellSample.get(key);
+        if (!sample) continue;
 
         try {
-          const placeName = await resolveRoutePlaceName(center[0], center[1]);
-          if (!placeName) continue;
-          updates.set(route.properties.id, {
-            ...route,
-            properties: {
-              ...route.properties,
-              placeName,
-              updatedAt: new Date().toISOString(),
-            },
-          });
+          const placeName = await resolveRoutePlaceName(sample.lng, sample.lat);
+          if (placeName) {
+            cellPlaceNames.set(key, placeName);
+          }
         } catch {
-          // Nominatim may rate-limit; keep going for remaining routes.
+          // Nominatim may rate-limit; keep going for remaining cells.
         }
 
-        if (index < missing.length - 1) {
+        if (index < cells.length - 1) {
           await sleep(PLACE_NAME_GAP_MS);
         }
       }
 
-      if (updates.size === 0) {
+      if (cellPlaceNames.size === 0) {
         return;
       }
 
-      const updatedList = [...updates.values()];
-      await persistRoutes(updatedList);
-      set((state) => ({
-        routes: state.routes.map((item) => updates.get(item.properties.id) ?? item),
-      }));
+      const now = new Date().toISOString();
+      const idToPlace = new Map<string, string>();
+      for (const [cell, placeName] of cellPlaceNames) {
+        for (const id of cellToRouteIds.get(cell) ?? []) {
+          idToPlace.set(id, placeName);
+        }
+      }
+
+      const next = current.map((route) => {
+        const placeName = idToPlace.get(route.properties.id);
+        if (!placeName || route.properties.placeName) {
+          return route;
+        }
+        return {
+          ...route,
+          properties: {
+            ...route.properties,
+            placeName,
+            updatedAt: now,
+          },
+        };
+      });
+
+      // One snapshot write for the whole list — not per-route cloud fetches.
+      await replacePersistedRoutes(next);
+      set({ routes: next });
     })().finally(() => {
       placeNamesInFlight = null;
     });
@@ -222,10 +276,8 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   applyRoutes: (routes) => {
-    const sorted = [...routes].sort(
-      (a, b) => getRouteActivityDate(b).getTime() - getRouteActivityDate(a).getTime(),
-    );
-    set({ routes: sorted, isLoading: false });
+    seedPlaceCache(routes);
+    set({ routes: sortByActivity(routes), isLoading: false });
   },
 
   importRoutes: async (files, overwrite, kind = 'auto') => {
@@ -235,90 +287,94 @@ export const useRouteStore = create<RouteState>((set, get) => ({
   },
 
   applyImportedRoutes: async (parsed, overwrite) => {
-    const { routes: incoming, appleHealth } = parsed;
+    const incomingRaw = thinRoutes(parsed.routes).routes;
+    // Collapse duplicates inside the import batch itself (same Health export twice, etc.).
+    const { routes: incoming } = dedupeRoutes(incomingRaw);
+
     const existing = get().routes;
-    const existingIds = new Set(existing.map((route) => route.properties.id));
-    const existingByTime = new Map<string, RouteFeature>();
+    const { byId, byKey } = indexRoutesForDedup(existing);
 
-    if (appleHealth) {
-      for (const route of existing) {
-        const timeKey = getRouteTimeKey(route);
-        if (!existingByTime.has(timeKey)) {
-          existingByTime.set(timeKey, route);
-        }
-      }
-    }
-
-    const toSave: RouteFeature[] = [];
+    const nextById = new Map(existing.map((route) => [route.properties.id, route]));
+    let imported = 0;
     let skipped = 0;
 
-    for (let route of incoming) {
-      if (existingIds.has(route.properties.id) && !overwrite) {
-        skipped += 1;
+    for (const route of incoming) {
+      const match = findMatchingRoute(route, byId, byKey);
+
+      if (match) {
+        if (!overwrite) {
+          skipped += 1;
+          continue;
+        }
+
+        // Keep stable id / color / notes / placeName from the local copy unless incoming has them.
+        const merged: RouteFeature = {
+          ...route,
+          properties: {
+            ...route.properties,
+            id: match.properties.id,
+            color: match.properties.color,
+            notes: route.properties.notes ?? match.properties.notes,
+            placeName: route.properties.placeName ?? match.properties.placeName,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+        nextById.set(merged.properties.id, merged);
+        imported += 1;
+
+        byId.set(merged.properties.id, merged);
+        for (const key of getRouteDedupKeys(merged)) {
+          byKey.set(key, merged);
+        }
         continue;
       }
 
-      if (appleHealth) {
-        const timeKey = getRouteTimeKey(route);
-        const existingAtTime = existingByTime.get(timeKey);
-        if (existingAtTime && existingAtTime.properties.id !== route.properties.id) {
-          if (!overwrite) {
-            skipped += 1;
-            continue;
-          }
-
-          route = {
-            ...route,
-            properties: {
-              ...route.properties,
-              id: existingAtTime.properties.id,
-            },
-          };
-        }
-      }
-
-      toSave.push(route);
-      existingIds.add(route.properties.id);
-      if (appleHealth) {
-        existingByTime.set(getRouteTimeKey(route), route);
+      nextById.set(route.properties.id, route);
+      imported += 1;
+      byId.set(route.properties.id, route);
+      for (const key of getRouteDedupKeys(route)) {
+        byKey.set(key, route);
       }
     }
 
-    if (toSave.length > 0) {
-      const thinned = thinRoutes(toSave).routes;
-      await persistRoutes(thinned);
-      await get().loadRoutes();
+    if (imported === 0) {
+      return { imported: 0, skipped };
     }
 
-    return { imported: toSave.length, skipped };
+    const next = sortByActivity([...nextById.values()]);
+    await replacePersistedRoutes(next);
+    seedPlaceCache(next);
+    set({ routes: next, isLoading: false });
+    window.setTimeout(() => {
+      void get().ensurePlaceNames();
+    }, 0);
+
+    return { imported, skipped };
   },
 
   removeDuplicateRoutes: async () => {
-    const routes = get().routes;
-    const duplicateIds = findDuplicateRouteIds(routes);
-    if (duplicateIds.length === 0) {
+    const { routes, removedIds } = dedupeRoutes(get().routes);
+    if (removedIds.length === 0) {
       return { removed: 0 };
     }
 
-    for (const id of duplicateIds) {
-      await removeRoute(id);
-    }
+    const next = sortByActivity(routes);
+    await replacePersistedRoutes(next);
 
+    const removedSet = new Set(removedIds);
     set((state) => {
-      const duplicateSet = new Set(duplicateIds);
       const hiddenIds = new Set(state.hiddenIds);
-      for (const id of duplicateIds) {
+      for (const id of removedIds) {
         hiddenIds.delete(id);
       }
       return {
-        routes: state.routes.filter((route) => !duplicateSet.has(route.properties.id)),
-        selectedId:
-          state.selectedId && duplicateSet.has(state.selectedId) ? null : state.selectedId,
+        routes: next,
+        selectedId: state.selectedId && removedSet.has(state.selectedId) ? null : state.selectedId,
         hiddenIds,
       };
     });
 
-    return { removed: duplicateIds.length };
+    return { removed: removedIds.length };
   },
 
   clearAllRoutes: async () => {

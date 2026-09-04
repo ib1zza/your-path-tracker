@@ -42,6 +42,9 @@ function maplibreWorkerAssets(): Plugin {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), maplibreWorkerAssets()],
+  server: {
+    port: 5555,
+  },
   optimizeDeps: {
     include: ['maplibre-gl'],
     exclude: ['maplibre-gl/dist/maplibre-gl-worker.mjs'],

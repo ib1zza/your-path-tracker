@@ -163,8 +163,8 @@ export function RoutePanel() {
       const parsed = await readRouteFiles(files, routes.length, importKind);
       const overwrite = window.confirm(
         parsed.appleHealth
-          ? 'Apple Health routes are matched by start time. Replace routes that already exist at the same time? (Cancel = skip duplicates and keep your edits)'
-          : 'If imported routes have the same IDs as existing ones, overwrite them?',
+          ? 'Match routes by start date/time (and similar geometry). Replace matches? Cancel = skip duplicates and keep your edits.'
+          : 'Match by id, start time, or similar path. Replace matches? Cancel = skip duplicates.',
       );
       const result = await applyImportedRoutes(parsed, overwrite);
       setImportMessage(`Imported ${result.imported}, skipped ${result.skipped}`);

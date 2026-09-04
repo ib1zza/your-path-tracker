@@ -38,7 +38,7 @@ routeStore.importRoutes(files, overwrite, kind?)
 
 - **overwrite=false** + тот же `properties.id` → skipped
 - **overwrite=true** → replaces existing id
-- **Apple Health** (`parsed.appleHealth`): дополнительно match по `getRouteTimeKey` (время старта, минута). Без overwrite — skip; с overwrite — импорт получает id уже существующего маршрута.
+- **Apple Health** (`parsed.appleHealth`): UI copy mentions start time; matching uses the same keys for all imports (id, filename clock, track time, geometry, name+distance).
 
 ### ImportKind
 

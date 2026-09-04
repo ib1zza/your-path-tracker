@@ -2,13 +2,21 @@ import type { RouteFeature } from '../../types/route';
 
 export type RouteGroupBy = 'none' | 'month' | 'year';
 
-const NAME_DATE_RE = /(\d{4})-(\d{2})-(\d{2})/;
-const NAME_DATETIME_RE = /(\d{4})-(\d{2})-(\d{2})[_T ](\d{2})-(\d{2})-(\d{2})/;
-const NAME_DATETIME_12H_RE = /(\d{4})-(\d{2})-(\d{2})[\s_T]+(\d{1,2}):(\d{2})\s*(am|pm)?/i;
+/** `2024-03-15_07-32-00` or `2024-03-15 07:32:00` */
+const NAME_DATETIME_RE =
+  /(\d{4})-(\d{2})-(\d{2})[\s_T]+(\d{1,2})[-:](\d{2})(?:[-:](\d{2}))?\s*(am|pm)?/i;
 
-function roundToMinuteIso(date: Date): string {
+/** Date only: `2024-03-15` */
+const NAME_DATE_RE = /(\d{4})-(\d{2})-(\d{2})/;
+
+function pad2(value: number): string {
+  return String(value).padStart(2, '0');
+}
+
+/** Round to minute in UTC for stable dedup keys across re-imports. */
+export function roundToMinuteIso(date: Date): string {
   const copy = new Date(date);
-  copy.setSeconds(0, 0);
+  copy.setUTCSeconds(0, 0);
   return copy.toISOString();
 }
 
@@ -29,39 +37,41 @@ function parseHourMinute(
       h = isPm ? 12 : 0;
     } else if (isPm) {
       h += 12;
+    } else if (h > 12) {
+      return { hour: h, minute: m };
     }
-  } else if (h > 12) {
-    // Already 24-hour style in a 12-hour pattern (e.g. "Route 2024-07-17 22:20").
-    return { hour: h, minute: m };
   }
 
   return { hour: h, minute: m };
 }
 
-function extractTimeFromLabel(label: string | undefined): string | undefined {
+/**
+ * Parse wall-clock date/time from Health-style labels as UTC components.
+ * Apple Health GPX names: `route_2024-03-15_7-32am`, `route_2024-07-17_10-30-00`.
+ */
+export function extractTimeFromLabel(label: string | undefined): string | undefined {
   if (!label) {
     return undefined;
   }
 
   const dateTimeMatch = label.match(NAME_DATETIME_RE);
   if (dateTimeMatch) {
-    const [, year, month, day, hour, minute, second] = dateTimeMatch;
-    const parsed = Date.parse(`${year}-${month}-${day}T${hour}:${minute}:${second}`);
-    if (!Number.isNaN(parsed)) {
-      return roundToMinuteIso(new Date(parsed));
-    }
-  }
-
-  const dateTime12Match = label.match(NAME_DATETIME_12H_RE);
-  if (dateTime12Match) {
-    const [, year, month, day, hour, minute, meridiem] = dateTime12Match;
+    const [, year, month, day, hour, minute, second, meridiem] = dateTimeMatch;
     const parts = parseHourMinute(hour, minute, meridiem);
     if (parts) {
-      const hh = String(parts.hour).padStart(2, '0');
-      const mm = String(parts.minute).padStart(2, '0');
-      const parsed = Date.parse(`${year}-${month}-${day}T${hh}:${mm}:00`);
-      if (!Number.isNaN(parsed)) {
-        return roundToMinuteIso(new Date(parsed));
+      const ss = second != null && second !== '' ? Number.parseInt(second, 10) : 0;
+      const safeSecond = Number.isNaN(ss) ? 0 : Math.min(59, Math.max(0, ss));
+      // Interpret filename clock as local wall time via Date constructor, then normalize to minute UTC.
+      const local = new Date(
+        Number.parseInt(year, 10),
+        Number.parseInt(month, 10) - 1,
+        Number.parseInt(day, 10),
+        parts.hour,
+        parts.minute,
+        safeSecond,
+      );
+      if (!Number.isNaN(local.getTime())) {
+        return roundToMinuteIso(local);
       }
     }
   }
@@ -69,7 +79,18 @@ function extractTimeFromLabel(label: string | undefined): string | undefined {
   const dateMatch = label.match(NAME_DATE_RE);
   if (dateMatch) {
     const [, year, month, day] = dateMatch;
-    return roundToMinuteIso(new Date(`${year}-${month}-${day}T12:00:00`));
+    // Date-only: noon local — used for grouping, not strong dedup alone.
+    const local = new Date(
+      Number.parseInt(year, 10),
+      Number.parseInt(month, 10) - 1,
+      Number.parseInt(day, 10),
+      12,
+      0,
+      0,
+    );
+    if (!Number.isNaN(local.getTime())) {
+      return roundToMinuteIso(local);
+    }
   }
 
   return undefined;
@@ -88,26 +109,74 @@ function firstTimeValue(value: unknown): string | undefined {
   return undefined;
 }
 
-/** Best-effort activity date from GeoJSON/GPX properties or name. */
+function hasClockInLabel(label: string | undefined): boolean {
+  if (!label) return false;
+  return NAME_DATETIME_RE.test(label);
+}
+
+/**
+ * Best start instant for a route.
+ * Prefer GPX/TCX track times and name clock; use createdAt when it encodes real activity time.
+ */
+export function getRouteStartInstant(route: RouteFeature): Date | undefined {
+  const props = route.properties as unknown as Record<string, unknown>;
+
+  const coordTimes = (props.coordinateProperties as { times?: unknown } | undefined)?.times;
+  const firstCoordTime = firstTimeValue(coordTimes);
+  if (firstCoordTime && !Number.isNaN(Date.parse(firstCoordTime))) {
+    return new Date(firstCoordTime);
+  }
+
+  if (typeof props.time === 'string' && !Number.isNaN(Date.parse(props.time))) {
+    return new Date(props.time);
+  }
+
+  const fromName = extractTimeFromLabel(route.properties.name);
+  if (fromName && hasClockInLabel(route.properties.name)) {
+    return new Date(fromName);
+  }
+
+  const createdAt = route.properties.createdAt;
+  if (typeof createdAt === 'string' && !Number.isNaN(Date.parse(createdAt))) {
+    // If name has a clock that disagrees with createdAt by >36h, prefer name (import-time createdAt).
+    if (fromName && hasClockInLabel(route.properties.name)) {
+      const created = Date.parse(createdAt);
+      const named = Date.parse(fromName);
+      if (Math.abs(created - named) > 1000 * 60 * 60 * 36) {
+        return new Date(fromName);
+      }
+    }
+    return new Date(createdAt);
+  }
+
+  if (fromName) {
+    return new Date(fromName);
+  }
+
+  return undefined;
+}
+
+/** Best-effort activity date from GeoJSON/GPX properties or name (for createdAt on import). */
 export function extractImportedCreatedAt(
   properties: Record<string, unknown> | null | undefined,
   fallbackName?: string,
 ): string | undefined {
   if (properties) {
+    const coordTimes = (properties.coordinateProperties as { times?: unknown } | undefined)?.times;
+    const firstTime = firstTimeValue(coordTimes);
+    if (firstTime && !Number.isNaN(Date.parse(firstTime))) {
+      return new Date(firstTime).toISOString();
+    }
+
+    if (typeof properties.time === 'string' && !Number.isNaN(Date.parse(properties.time))) {
+      return new Date(properties.time).toISOString();
+    }
+
     if (
       typeof properties.createdAt === 'string' &&
       !Number.isNaN(Date.parse(properties.createdAt))
     ) {
       return new Date(properties.createdAt).toISOString();
-    }
-    if (typeof properties.time === 'string' && !Number.isNaN(Date.parse(properties.time))) {
-      return new Date(properties.time).toISOString();
-    }
-
-    const coordTimes = (properties.coordinateProperties as { times?: unknown } | undefined)?.times;
-    const firstTime = firstTimeValue(coordTimes);
-    if (firstTime && !Number.isNaN(Date.parse(firstTime))) {
-      return new Date(firstTime).toISOString();
     }
   }
 
@@ -121,59 +190,197 @@ export function extractImportedCreatedAt(
 }
 
 export function getRouteActivityDate(route: RouteFeature): Date {
+  const start = getRouteStartInstant(route);
+  if (start) {
+    return start;
+  }
+
   const fromName = route.properties.name.match(NAME_DATE_RE);
   if (fromName) {
-    return new Date(`${fromName[1]}-${fromName[2]}-${fromName[3]}T12:00:00`);
+    return new Date(
+      Number.parseInt(fromName[1], 10),
+      Number.parseInt(fromName[2], 10) - 1,
+      Number.parseInt(fromName[3], 10),
+      12,
+      0,
+      0,
+    );
   }
 
   const parsed = Date.parse(route.properties.createdAt);
   return Number.isNaN(parsed) ? new Date() : new Date(parsed);
 }
 
-/** Start-time key (minute precision) for Apple Health import dedup. */
-export function getRouteTimeKey(route: RouteFeature): string {
-  const activityTime = extractImportedCreatedAt(
-    route.properties as unknown as Record<string, unknown>,
-    route.properties.name,
-  );
-  if (activityTime) {
-    return roundToMinuteIso(new Date(activityTime));
+/** Activity start rounded to the minute (UTC), if known. */
+export function getRouteTimeKey(route: RouteFeature): string | undefined {
+  const start = getRouteStartInstant(route);
+  if (!start) {
+    return undefined;
   }
-
-  return toDateInputValue(getRouteActivityDate(route));
+  return roundToMinuteIso(start);
 }
 
-/** Fallback dedup key for routes with the same label and distance. */
+/** Fallback: normalized name + distance bucket (~100 m). */
 export function getRouteLooseDedupKey(route: RouteFeature): string {
   const name = route.properties.name.trim().toLowerCase().replace(/\s+/g, ' ');
   const dist = Math.round((route.properties.distanceMeters ?? 0) / 100);
-  return `${name}|d${dist}`;
+  return `n:${name}|d${dist}`;
+}
+
+/** Geometry fingerprint: first/last point + length + distance. */
+export function getRouteGeometryDedupKey(route: RouteFeature): string {
+  const coords = route.geometry.coordinates;
+  if (!coords || coords.length < 2) {
+    return getRouteLooseDedupKey(route);
+  }
+
+  const first = coords[0];
+  const last = coords[coords.length - 1];
+  const dist = Math.round((route.properties.distanceMeters ?? 0) / 50);
+  return `g:${first[0].toFixed(4)},${first[1].toFixed(4)}>${last[0].toFixed(4)},${last[1].toFixed(4)}|n${coords.length}|d${dist}`;
+}
+
+/** All keys used to detect duplicates (time preferred). */
+export function getRouteDedupKeys(route: RouteFeature): string[] {
+  const keys = new Set<string>();
+  const props = route.properties as unknown as Record<string, unknown>;
+  const hasTrackTime = Boolean(
+    firstTimeValue((props.coordinateProperties as { times?: unknown } | undefined)?.times) ||
+      (typeof props.time === 'string' && !Number.isNaN(Date.parse(props.time))),
+  );
+
+  // Prefer filename clock (Apple Health `route_YYYY-MM-DD_h-mmam`) as a stable key
+  // independent of GPX timezone / import-time createdAt.
+  if (hasClockInLabel(route.properties.name)) {
+    const fromName = extractTimeFromLabel(route.properties.name);
+    if (fromName) {
+      keys.add(`t:${fromName}`);
+    }
+  }
+
+  if (hasTrackTime) {
+    const coordTimes = (props.coordinateProperties as { times?: unknown } | undefined)?.times;
+    const firstTime = firstTimeValue(coordTimes);
+    if (firstTime && !Number.isNaN(Date.parse(firstTime))) {
+      keys.add(`t:${roundToMinuteIso(new Date(firstTime))}`);
+    } else if (typeof props.time === 'string' && !Number.isNaN(Date.parse(props.time))) {
+      keys.add(`t:${roundToMinuteIso(new Date(props.time))}`);
+    }
+  }
+
+  if (keys.size === 0 && NAME_DATE_RE.test(route.properties.name)) {
+    // Date-only: pair day with distance so same-day workouts don't collide.
+    const dateOnly = extractTimeFromLabel(route.properties.name);
+    if (dateOnly) {
+      const dist = Math.round((route.properties.distanceMeters ?? 0) / 100);
+      keys.add(`td:${dateOnly.slice(0, 10)}|d${dist}`);
+    }
+  }
+
+  if (keys.size === 0) {
+    const timeKey = getRouteTimeKey(route);
+    if (timeKey) {
+      keys.add(`t:${timeKey}`);
+    }
+  }
+
+  keys.add(getRouteGeometryDedupKey(route));
+  keys.add(getRouteLooseDedupKey(route));
+  return [...keys];
 }
 
 export function findDuplicateRouteIds(routes: RouteFeature[]): string[] {
-  const seen = new Map<string, RouteFeature>();
+  const seen = new Map<string, string>();
   const duplicateIds: string[] = [];
 
   for (const route of routes) {
-    const keys = [getRouteTimeKey(route), getRouteLooseDedupKey(route)];
-    const isDuplicate = keys.some((key) => seen.has(key));
-    if (isDuplicate) {
+    const keys = getRouteDedupKeys(route);
+    const matched = keys.find((key) => seen.has(key));
+    if (matched) {
       duplicateIds.push(route.properties.id);
       continue;
     }
 
     for (const key of keys) {
-      seen.set(key, route);
+      seen.set(key, route.properties.id);
     }
   }
 
   return duplicateIds;
 }
 
+/** Keep first occurrence of each dedup key; drop later duplicates. */
+export function dedupeRoutes(routes: RouteFeature[]): {
+  routes: RouteFeature[];
+  removedIds: string[];
+} {
+  const seen = new Map<string, string>();
+  const kept: RouteFeature[] = [];
+  const removedIds: string[] = [];
+
+  for (const route of routes) {
+    const keys = getRouteDedupKeys(route);
+    const matched = keys.find((key) => seen.has(key));
+    if (matched) {
+      removedIds.push(route.properties.id);
+      continue;
+    }
+
+    kept.push(route);
+    for (const key of keys) {
+      seen.set(key, route.properties.id);
+    }
+  }
+
+  return { routes: kept, removedIds };
+}
+
+/**
+ * Find an existing route that matches incoming by id or dedup keys.
+ */
+export function findMatchingRoute(
+  incoming: RouteFeature,
+  existingById: Map<string, RouteFeature>,
+  existingByKey: Map<string, RouteFeature>,
+): RouteFeature | undefined {
+  const byId = existingById.get(incoming.properties.id);
+  if (byId) {
+    return byId;
+  }
+
+  for (const key of getRouteDedupKeys(incoming)) {
+    const match = existingByKey.get(key);
+    if (match) {
+      return match;
+    }
+  }
+
+  return undefined;
+}
+
+export function indexRoutesForDedup(routes: RouteFeature[]): {
+  byId: Map<string, RouteFeature>;
+  byKey: Map<string, RouteFeature>;
+} {
+  const byId = new Map<string, RouteFeature>();
+  const byKey = new Map<string, RouteFeature>();
+
+  for (const route of routes) {
+    byId.set(route.properties.id, route);
+    for (const key of getRouteDedupKeys(route)) {
+      if (!byKey.has(key)) {
+        byKey.set(key, route);
+      }
+    }
+  }
+
+  return { byId, byKey };
+}
+
 export function toDateInputValue(date: Date): string {
   const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
+  const month = pad2(date.getMonth() + 1);
+  const day = pad2(date.getDate());
   return `${year}-${month}-${day}`;
 }
 
@@ -225,7 +432,7 @@ export function groupRoutes(routes: RouteFeature[], groupBy: RouteGroupBy): Rout
     const key =
       groupBy === 'year'
         ? String(date.getFullYear())
-        : `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        : `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
 
     const list = buckets.get(key);
     if (list) {
@@ -253,5 +460,5 @@ export function groupKeyForRoute(route: RouteFeature, groupBy: RouteGroupBy): st
   if (groupBy === 'none') return 'all';
   const date = getRouteActivityDate(route);
   if (groupBy === 'year') return String(date.getFullYear());
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}`;
 }
